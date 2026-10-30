@@ -1,0 +1,49 @@
+[build-system]
+requires = ["setuptools>=64", "setuptools-scm>=8"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "vsql-python"
+# The version is the git tag (such as v1.0.0), see [tool.setuptools_scm].
+dynamic = ["version"]
+description = "A DB-API 2.0 (PEP 249) driver for vsql, a single file or in-memory SQL database."
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE", "internal/amalgamation/LICENSE", "internal/amalgamation/LICENSE-V"]
+requires-python = ">=3.9"
+authors = [{ name = "Elliot Chance", email = "elliotchance@gmail.com" }]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: C",
+    "Topic :: Database",
+    "Topic :: Database :: Database Engines/Servers",
+]
+
+[project.urls]
+Homepage = "https://github.com/elliotchance/vsql-python"
+vsql = "https://github.com/elliotchance/vsql"
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+packages = ["vsql"]
+
+[tool.setuptools_scm]
+# For a build without the git history (such as a copy of the repository).
+fallback_version = "0.0.0"
+
+[tool.cibuildwheel]
+# CPython only, and not free-threaded (the module would turn the GIL back on).
+build = "cp3*"
+skip = ["cp3??t-*", "*-musllinux_*"]
+test-requires = ["pytest"]
+test-command = "pytest {project}/tests"
+
+[tool.cibuildwheel.linux]
+archs = ["native"]
+
+[tool.cibuildwheel.macos]
+archs = ["native"]
+
+[tool.cibuildwheel.windows]
+# There's no libvsql C for Windows ARM64 (or 32 bit).
+archs = ["AMD64"]

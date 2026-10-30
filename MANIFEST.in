@@ -1,0 +1,3 @@
+include libvsql_flags.json
+recursive-include internal/amalgamation *
+include src/vsql/*.c
