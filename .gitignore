@@ -1,0 +1,10 @@
+*.vsql
+*.vsql.*
+__pycache__/
+*.so
+*.pyd
+build/
+dist/
+*.egg-info/
+.venv/
+wheelhouse/

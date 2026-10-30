@@ -1,0 +1,34 @@
+name: Test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    name: ${{ matrix.os }} (${{ matrix.arch }}), Python ${{ matrix.python }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [Linux, macOS, Windows]
+        arch: [x86-64, ARM64]
+        python: ["3.9", "3.14"]
+        include:
+          - { os: Linux, arch: x86-64, runner: ubuntu-latest }
+          - { os: Linux, arch: ARM64, runner: ubuntu-24.04-arm }
+          - { os: macOS, arch: x86-64, runner: macos-15-intel }
+          - { os: macOS, arch: ARM64, runner: macos-latest }
+          - { os: Windows, arch: x86-64, runner: windows-latest }
+        exclude:
+          # There's no libvsql C for Windows ARM64.
+          - { os: Windows, arch: ARM64 }
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ matrix.python }}
+      - run: pip install . pytest
+      - run: pytest -v tests
+      - run: python example/main.py

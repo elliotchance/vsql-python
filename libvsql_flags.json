@@ -1,0 +1,22 @@
+{
+  "linux_amd64": {
+    "defines": ["USE_MMAP=1", "USE_MUNMAP=1", "HANDLE_FORK=1", "GC_THREADS=1", "THREAD_LOCAL_ALLOC=1", "GC_BUILTIN_ATOMIC=1", "ALL_INTERIOR_POINTERS=1", "V_GCBOEHM_NATIVE"],
+    "libraries": ["dl", "pthread", "m"]
+  },
+  "linux_arm64": {
+    "defines": ["USE_MMAP=1", "USE_MUNMAP=1", "HANDLE_FORK=1", "GC_THREADS=1", "THREAD_LOCAL_ALLOC=1", "GC_BUILTIN_ATOMIC=1", "ALL_INTERIOR_POINTERS=1", "V_GCBOEHM_NATIVE"],
+    "libraries": ["dl", "pthread", "m"]
+  },
+  "macos_amd64": {
+    "defines": ["USE_MMAP=1", "USE_MUNMAP=1", "HANDLE_FORK=1", "GC_THREADS=1", "THREAD_LOCAL_ALLOC=1", "GC_BUILTIN_ATOMIC=1", "ALL_INTERIOR_POINTERS=1", "MPROTECT_VDB=1", "LARGE_CONFIG=1", "V_GCBOEHM_NATIVE"],
+    "libraries": ["dl", "pthread", "m"]
+  },
+  "macos_arm64": {
+    "defines": ["USE_MMAP=1", "USE_MUNMAP=1", "HANDLE_FORK=1", "GC_THREADS=1", "THREAD_LOCAL_ALLOC=1", "GC_BUILTIN_ATOMIC=1", "ALL_INTERIOR_POINTERS=1", "MPROTECT_VDB=1", "LARGE_CONFIG=1", "V_GCBOEHM_NATIVE"],
+    "libraries": ["dl", "pthread", "m"]
+  },
+  "windows_amd64": {
+    "defines": ["GC_THREADS=1", "THREAD_LOCAL_ALLOC=1", "GC_NOT_DLL=1", "GC_WIN32_THREADS=1", "NO_MSGBOX_ON_ERROR=1", "CONSOLE_LOG=1", "GC_BUILTIN_ATOMIC=1", "ALL_INTERIOR_POINTERS=1", "V_GCBOEHM_NATIVE"],
+    "libraries": ["dbghelp", "user32", "ws2_32", "advapi32", "bcrypt"]
+  }
+}
