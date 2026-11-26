@@ -84,6 +84,16 @@ class Connection:
     def in_transaction(self):
         return self._in_transaction
 
+    @property
+    def file_version(self):
+        """The (read, write) versions of the database file's format, which are
+        (0, 0) for ":memory:". vsql can open a file when it knows the read
+        version, and change it when it knows the write version."""
+
+        self._check()
+        return (lib.get_info(self._dbc, lib.SQL_VSQL_FILE_READ_VERSION, False),
+                lib.get_info(self._dbc, lib.SQL_VSQL_FILE_WRITE_VERSION, False))
+
     def _begin(self):
         """Starts a transaction, unless autocommit is on or there already is
         one."""
@@ -113,6 +123,22 @@ class Connection:
         """Rolls back the transaction, if there is one."""
 
         self._end(False)
+
+    def rollback_to_savepoint(self, name):
+        """Rolls back the transaction to a savepoint, which was made by
+        executing SAVEPOINT. vsql doesn't allow ROLLBACK TO SAVEPOINT as a
+        statement (like ROLLBACK), so this is how it's done. The cursors of the
+        connection are closed. RELEASE SAVEPOINT can be executed as a
+        statement.
+
+        The name is an identifier, so a name that isn't quoted is upper case
+        (such as "foo", which is FOO), and a quoted name (such as '"foo"') is
+        what's inside the quotes."""
+
+        self._check()
+        for cursor in list(self._cursors):
+            cursor._close_results()
+        lib.end_savepoint(self._dbc, name, True)
 
     def cursor(self):
         self._check()
@@ -238,7 +264,11 @@ class Cursor:
         for i in range(1, n + 1):
             name, data_type, size, digits, nullable = lib.describe_col(self._stmt, i)
             type_name, kind, converter = _convert.types.get(data_type, ("", "s", None))
-            description.append(_column(name, type_name, size, digits, nullable))
+            leading = None
+            if data_type in _convert.interval_types:
+                leading = lib.col_attribute(self._stmt, i,
+                                            lib.SQL_DESC_DATETIME_INTERVAL_PRECISION)
+            description.append(_column(name, type_name, size, digits, nullable, leading))
             kinds.append(kind)
             converters.append(converter)
         self.description = tuple(description)
@@ -346,15 +376,52 @@ class Cursor:
 
 
 # The PEP 249 description of a column: (name, type_code, display_size,
-# internal_size, precision, scale, null_ok).
-def _column(name, type_name, size, digits, nullable):
+# internal_size, precision, scale, null_ok). The internal_size is the
+# ColumnSize from SQLDescribeCol.
+def _column(name, type_name, size, digits, nullable, leading=None):
     display_size = precision = scale = None
-    if type_name in ("CHARACTER", "CHARACTER VARYING"):
+    if type_name in ("CHARACTER", "CHARACTER VARYING", "CHARACTER LARGE OBJECT"):
         # The size is in octets, with 4 for each character.
         display_size = size // 4 if size > 0 else None
     elif type_name in ("DECIMAL", "NUMERIC"):
         precision, scale = size, digits
+    elif type_name == "DECFLOAT":
+        precision = size
+    elif leading is not None:
+        # An interval's precision is the leading field precision, and its scale
+        # is the fractional seconds precision (if it ends with SECOND). The
+        # size is its length in positions.
+        precision = leading
+        display_size = size
+        if type_name.endswith("SECOND"):
+            scale = digits
 
     return (name, type_name, display_size, size, precision, scale,
             nullable != lib.SQL_NO_NULLS)
+
+
+def build_info():
+    """The (major, minor, patch) version of vsql, and a dict of how it was
+    built, from SQLGetInfo (which needs a connection, so they're read from a
+    ":memory:" database)."""
+
+    fields = {
+        "version": lib.SQL_VSQL_BUILD_VERSION,
+        "commit": lib.SQL_VSQL_BUILD_COMMIT,
+        "date": lib.SQL_VSQL_BUILD_DATE,
+        "v_version": lib.SQL_VSQL_BUILD_V_VERSION,
+        "v_commit": lib.SQL_VSQL_BUILD_V_COMMIT,
+        "c_compiler": lib.SQL_VSQL_BUILD_C_COMPILER,
+        "operating_system": lib.SQL_VSQL_OPERATING_SYSTEM,
+        "machine": lib.SQL_VSQL_MACHINE,
+    }
+    conn = Connection(":memory:")
+    try:
+        info = {name: lib.get_info(conn._dbc, code, True) for name, code in fields.items()}
+        # SQL_DBMS_VERSION is "01.07.0058", even if it isn't a release.
+        dbms_version = lib.get_info(conn._dbc, lib.SQL_DBMS_VERSION, True)
+    finally:
+        conn.close()
+
+    return tuple(int(part) for part in dbms_version.split(".")), info
 

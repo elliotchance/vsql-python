@@ -55,6 +55,40 @@ def scalar(conn, query, parameters=None):
         ("CAST(NULL AS INTEGER)", None, "INTEGER"),
         ("CAST(NULL AS BOOLEAN)", None, "BOOLEAN"),
         ("CAST(NULL AS DATE)", None, "DATE"),
+        ("CAST(1.5 AS DECFLOAT)", decimal.Decimal("1.5"), "DECFLOAT"),
+        ("CAST(1.5e300 AS DECFLOAT(16))", decimal.Decimal("1.5E+300"), "DECFLOAT"),
+        ("CAST('héllo' AS CLOB(10))", "héllo", "CHARACTER LARGE OBJECT"),
+        ("X'00ff10'", b"\x00\xff\x10", "BINARY"),
+        ("CAST(X'01' AS BINARY(3))", b"\x01\x00\x00", "BINARY"),
+        ("CAST(X'0102' AS VARBINARY(10))", b"\x01\x02", "BINARY VARYING"),
+        ("CAST(X'' AS VARBINARY(10))", b"", "BINARY VARYING"),
+        ("CAST(X'0102' AS BLOB(10))", b"\x01\x02", "BINARY LARGE OBJECT"),
+        ("CAST(NULL AS VARBINARY(10))", None, "BINARY VARYING"),
+        ("INTERVAL '1-02' YEAR TO MONTH", vsql.YearMonthInterval(1, 2), "INTERVAL YEAR TO MONTH"),
+        ("INTERVAL -'1-02' YEAR TO MONTH", vsql.YearMonthInterval(-1, -2),
+         "INTERVAL YEAR TO MONTH"),
+        ("INTERVAL '100' YEAR(3)", vsql.YearMonthInterval(years=100), "INTERVAL YEAR"),
+        ("INTERVAL '14' MONTH", vsql.YearMonthInterval(years=1, months=2), "INTERVAL MONTH"),
+        ("INTERVAL '3' DAY", datetime.timedelta(days=3), "INTERVAL DAY"),
+        ("INTERVAL '-5' HOUR", datetime.timedelta(hours=-5), "INTERVAL HOUR"),
+        ("INTERVAL '90' MINUTE", datetime.timedelta(minutes=90), "INTERVAL MINUTE"),
+        ("INTERVAL '12.000005' SECOND", datetime.timedelta(seconds=12, microseconds=5),
+         "INTERVAL SECOND"),
+        ("INTERVAL '1 02' DAY TO HOUR", datetime.timedelta(days=1, hours=2),
+         "INTERVAL DAY TO HOUR"),
+        ("INTERVAL '1 02:03' DAY TO MINUTE", datetime.timedelta(days=1, hours=2, minutes=3),
+         "INTERVAL DAY TO MINUTE"),
+        ("INTERVAL -'12345 04:05:06.5' DAY(5) TO SECOND",
+         -datetime.timedelta(days=12345, hours=4, minutes=5, seconds=6, microseconds=500000),
+         "INTERVAL DAY TO SECOND"),
+        ("INTERVAL '4:05' HOUR TO MINUTE", datetime.timedelta(hours=4, minutes=5),
+         "INTERVAL HOUR TO MINUTE"),
+        ("INTERVAL '4:05:06' HOUR TO SECOND", datetime.timedelta(hours=4, minutes=5, seconds=6),
+         "INTERVAL HOUR TO SECOND"),
+        ("INTERVAL '5:06.7' MINUTE TO SECOND",
+         datetime.timedelta(minutes=5, seconds=6, microseconds=700000),
+         "INTERVAL MINUTE TO SECOND"),
+        ("CAST(NULL AS INTERVAL DAY)", None, "INTERVAL DAY"),
     ],
 )
 def test_column_values(conn, expr, want, type_name):
@@ -78,7 +112,15 @@ def test_type_objects(conn):
     assert number == vsql.NUMBER and number != vsql.STRING
     assert string == vsql.STRING
     assert date == vsql.DATETIME
-    assert boolean not in (vsql.NUMBER, vsql.STRING, vsql.DATETIME)
+    assert boolean not in (vsql.NUMBER, vsql.STRING, vsql.DATETIME, vsql.BINARY)
+
+    cur = conn.execute("""VALUES ROW(X'01', CAST(X'01' AS BLOB(1)), CAST('a' AS CLOB(1)),
+        CAST(1 AS DECFLOAT), INTERVAL '1' DAY, INTERVAL '1-02' YEAR TO MONTH)""")
+    binary, blob, clob, decfloat, day, year_month = (d[1] for d in cur.description)
+    assert binary == vsql.BINARY and blob == vsql.BINARY and binary != vsql.STRING
+    assert clob == vsql.STRING
+    assert decfloat == vsql.NUMBER
+    assert day == vsql.DATETIME and year_month == vsql.DATETIME
 
 
 def test_description(conn):
@@ -92,6 +134,17 @@ def test_description(conn):
     assert b[6] is True
     assert b[2] == 20
     assert (c[4], c[5]) == (10, 3)
+
+    conn.execute("""CREATE TABLE bar (b VARBINARY(10), c CLOB(5), d DECFLOAT(16),
+        y INTERVAL YEAR(3) TO MONTH, s INTERVAL DAY(4) TO SECOND(3))""")
+    b, c, d, y, s = conn.execute("SELECT * FROM bar").description
+    assert b[1:6] == ("BINARY VARYING", None, 10, None, None)
+    assert c[1:6] == ("CHARACTER LARGE OBJECT", 5, 20, None, None)
+    assert d[1:6] == ("DECFLOAT", None, 16, 16, None)
+    # The precision of an interval is its leading field precision, and the
+    # scale is the fractional seconds precision. The size is its length.
+    assert y[1:6] == ("INTERVAL YEAR TO MONTH", 7, 7, 3, None)
+    assert s[1:6] == ("INTERVAL DAY TO SECOND", 18, 18, 4, 3)
 
     # A statement that isn't a query has no description.
     conn.execute("DELETE FROM foo")
@@ -128,6 +181,28 @@ def test_description(conn):
         ("dt", datetime.date(2022, 1, 2), datetime.date(2022, 1, 2)),
         ("tm", datetime.time(15, 4, 5, 123456), datetime.time(15, 4, 5, 123456)),
         ("tt", datetime.time(15, 4, 5, tzinfo=plus0530), datetime.time(15, 4, 5, tzinfo=plus0530)),
+        ("vb", b"\x00\xffab", b"\x00\xffab"),
+        ("vb", b"", b""),
+        ("vb", bytearray(b"\x01\x02"), b"\x01\x02"),
+        ("vb", memoryview(b"abc")[1:], b"bc"),
+        ("bi", b"\x01", b"\x01\x00\x00"),
+        ("bl", bytes(range(256)) * 4, bytes(range(256)) * 4),
+        ("cl", "héllo", "héllo"),
+        ("df", decimal.Decimal("1.25E-200"), decimal.Decimal("1.25E-200")),
+        ("df", 7, decimal.Decimal("7")),
+        ("ds", datetime.timedelta(days=3, hours=4, minutes=5, seconds=6, microseconds=7),
+         datetime.timedelta(days=3, hours=4, minutes=5, seconds=6, microseconds=7)),
+        ("ds", datetime.timedelta(microseconds=-1), datetime.timedelta(microseconds=-1)),
+        ("ds", datetime.timedelta(days=-12345678), datetime.timedelta(days=-12345678)),
+        ("ds", datetime.timedelta(0), datetime.timedelta(0)),
+        # A cast to an interval that doesn't end with SECOND truncates it.
+        ("hm", datetime.timedelta(hours=-5, minutes=-3, seconds=-59),
+         datetime.timedelta(hours=-5, minutes=-3)),
+        ("ym", vsql.YearMonthInterval(years=-100, months=-11),
+         vsql.YearMonthInterval(years=-100, months=-11)),
+        ("ym", vsql.YearMonthInterval(months=14), vsql.YearMonthInterval(years=1, months=2)),
+        ("vb", None, None),
+        ("ds", None, None),
         ("i", None, None),
         ("c", None, None),
         ("bo", None, None),
@@ -139,7 +214,9 @@ def test_parameters(conn, column, arg, want):
         s SMALLINT, i INTEGER, b BIGINT, r REAL, d DOUBLE PRECISION,
         n NUMERIC(20, 5), c VARCHAR(100), bo BOOLEAN,
         ts TIMESTAMP(6), tz TIMESTAMP(6) WITH TIME ZONE, dt DATE,
-        tm TIME(6), tt TIME(6) WITH TIME ZONE)""")
+        tm TIME(6), tt TIME(6) WITH TIME ZONE, vb VARBINARY(10), bi BINARY(3),
+        bl BLOB(2000), cl CLOB(10), df DECFLOAT, ds INTERVAL DAY(8) TO SECOND(6),
+        hm INTERVAL HOUR TO MINUTE, ym INTERVAL YEAR(3) TO MONTH)""")
     conn.execute(f"INSERT INTO foo ({column}) VALUES (?)", [arg])
 
     got = scalar(conn, f"SELECT {column} FROM foo")
@@ -163,7 +240,9 @@ def test_parameters_in_where(conn):
     [
         ({"i": 1}, vsql.NotSupportedError, "named parameters"),
         ("1", vsql.ProgrammingError, "sequence"),
-        ([b"bytes"], vsql.NotSupportedError, "binary"),
+        ([b"bytes"], vsql.ProgrammingError, "07006"),
+        ([datetime.timedelta(days=10**8)], vsql.DataError, "8 digits"),
+        ([vsql.YearMonthInterval(1)], vsql.ProgrammingError, "07006"),
         ([object()], vsql.ProgrammingError, "unsupported type"),
         ([decimal.Decimal("NaN")], vsql.DataError, "finite"),
         ([], vsql.ProgrammingError, "dynamic parameter"),
@@ -172,6 +251,41 @@ def test_parameters_in_where(conn):
 def test_parameter_errors(conn, parameters, error, message):
     with pytest.raises(error, match=message):
         conn.execute("VALUES CAST(? AS INTEGER)", parameters)
+
+
+def test_binary_parameters_in_where(conn):
+    conn.execute("CREATE TABLE foo (b VARBINARY(10), i INTEGER)")
+    conn.cursor().executemany("INSERT INTO foo (b, i) VALUES (?, ?)", [(b"\x00", 1), (b"\xff", 2)])
+    assert scalar(conn, "SELECT i FROM foo WHERE b = ?", [b"\xff"]) == 2
+    assert vsql.Binary(b"\x00") == b"\x00"
+
+
+def test_long_binary_strings(conn):
+    conn.execute("CREATE TABLE foo (b BLOB(10000))")
+    for n in [0, 255, 256, 257, 1000, 9999]:
+        # SQLGetData reads pieces of 256 octets.
+        want = bytes(i % 256 for i in range(n))
+        conn.execute("DELETE FROM foo")
+        conn.execute("INSERT INTO foo (b) VALUES (?)", [want])
+        assert scalar(conn, "SELECT b FROM foo") == want
+
+
+def test_interval_arithmetic(conn):
+    assert scalar(conn, "VALUES TIMESTAMP '2022-01-02 00:00:00' + CAST(? AS INTERVAL DAY)",
+                  [datetime.timedelta(days=3)]) == datetime.datetime(2022, 1, 5)
+    assert scalar(conn, "VALUES DATE '2022-01-15' - CAST(? AS INTERVAL MONTH)",
+                  [vsql.YearMonthInterval(months=2)]) == datetime.date(2021, 11, 15)
+
+
+def test_year_month_interval():
+    i = vsql.YearMonthInterval(years=1, months=14)
+    assert (i.years, i.months, i.total_months) == (2, 2, 26)
+    assert (-i).years == -2 and (-i).months == -2
+    assert str(-i) == "-2-02"
+    assert repr(i) == "YearMonthInterval(years=2, months=2)"
+    assert i == vsql.YearMonthInterval(months=26)
+    assert len({i, vsql.YearMonthInterval(months=26)}) == 1
+    assert i != 26
 
 
 def test_long_strings(conn):
@@ -213,12 +327,42 @@ def test_integrity_error(conn):
     assert e.value.sqlstate.startswith("23")
 
 
+def test_error_fields(conn):
+    conn.execute("""CREATE TABLE foo (id INTEGER CONSTRAINT foo_pk PRIMARY KEY,
+        x INTEGER CONSTRAINT x_positive CHECK (x > 0))""")
+    conn.execute("INSERT INTO foo (id, x) VALUES (1, 1)")
+
+    for query, constraint in [("INSERT INTO foo (id, x) VALUES (1, 1)", "FOO_PK"),
+                              ("INSERT INTO foo (id, x) VALUES (2, -1)", "X_POSITIVE")]:
+        with pytest.raises(vsql.IntegrityError) as e:
+            conn.execute(query)
+        assert (e.value.constraint_catalog, e.value.constraint_schema,
+                e.value.constraint_name) == (":memory:", "PUBLIC", constraint)
+        assert (e.value.catalog_name, e.value.schema_name,
+                e.value.table_name) == (":memory:", "PUBLIC", "FOO")
+        assert e.value.column_name is None
+
+    with pytest.raises(vsql.ProgrammingError) as e:
+        conn.execute("SELECT * FROM nope")
+    assert (e.value.table_name, e.value.constraint_name) == ("NOPE", None)
+
+    with pytest.raises(vsql.ProgrammingError) as e:
+        conn.execute("SELECT nope FROM foo")
+    assert (e.value.column_name, e.value.table_name) == ("NOPE", None)
+
+    # An error from the module itself doesn't have them.
+    e = vsql.ProgrammingError("x")
+    assert (e.sqlstate, e.table_name, e.cursor_name) == (None, None, None)
+
+
 def test_error_classes():
     assert isinstance(vsql.error("42P01", "x"), vsql.ProgrammingError)
     assert isinstance(vsql.error("23502", "x"), vsql.IntegrityError)
     assert isinstance(vsql.error("0A000", "x"), vsql.NotSupportedError)
     assert isinstance(vsql.error("HY010", "x"), vsql.InterfaceError)
     assert isinstance(vsql.error("HYC00", "x"), vsql.NotSupportedError)
+    assert isinstance(vsql.error("3B001", "x"), vsql.ProgrammingError)
+    assert vsql.error("23505", "x", constraint_name="PK").constraint_name == "PK"
     assert type(vsql.error("HY000", "x")) is vsql.DatabaseError
     assert type(vsql.error("99999", "x")) is vsql.DatabaseError
     for cls in [vsql.InterfaceError, vsql.DatabaseError, vsql.DataError, vsql.OperationalError,
@@ -376,6 +520,44 @@ def test_transactions(path):
     assert count() == 4
 
 
+def test_savepoints(path):
+    conn = vsql.connect(path)
+    conn.execute("CREATE TABLE foo (x INTEGER)")
+    conn.commit()
+
+    conn.execute("INSERT INTO foo (x) VALUES (1)")
+    conn.execute("SAVEPOINT a")
+    conn.execute("INSERT INTO foo (x) VALUES (2)")
+    conn.execute('SAVEPOINT "b"')
+    conn.execute("INSERT INTO foo (x) VALUES (3)")
+    cur = conn.execute("SELECT x FROM foo")
+    conn.rollback_to_savepoint('"b"')
+    # The rollback closed the cursors.
+    assert cur.fetchone() is None
+    assert conn.in_transaction
+    assert conn.execute("SELECT x FROM foo ORDER BY x").fetchall() == [(1,), (2,)]
+
+    conn.rollback_to_savepoint("a")
+    assert conn.execute("SELECT x FROM foo").fetchall() == [(1,)]
+
+    # RELEASE SAVEPOINT is a statement. A savepoint that doesn't exist is
+    # 3B001.
+    conn.execute("RELEASE SAVEPOINT a")
+    with pytest.raises(vsql.ProgrammingError) as e:
+        conn.rollback_to_savepoint("a")
+    assert e.value.sqlstate == "3B001"
+    # ROLLBACK TO SAVEPOINT isn't.
+    conn.execute("SAVEPOINT c")
+    with pytest.raises(vsql.ProgrammingError) as e:
+        conn.execute("ROLLBACK TO SAVEPOINT c")
+    assert e.value.sqlstate == "42000"
+
+    conn.commit()
+    conn.close()
+    with vsql.connect(path) as conn:
+        assert conn.execute("SELECT x FROM foo").fetchall() == [(1,)]
+
+
 def test_commit_closes_cursors(path):
     with vsql.connect(path) as conn:
         cur = conn.execute("VALUES 1")
@@ -456,3 +638,34 @@ def test_module_globals():
     assert vsql.paramstyle == "qmark"
     assert vsql.Date(2022, 1, 2) == datetime.date(2022, 1, 2)
     assert isinstance(vsql.TimestampFromTicks(0), datetime.datetime)
+
+
+def test_version():
+    assert isinstance(vsql.vsql_version, str)
+    assert len(vsql.vsql_version_info) == 3
+    assert vsql.vsql_version == ".".join(map(str, vsql.vsql_version_info))
+    assert vsql.vsql_version_info >= (1, 7, 58)
+
+    info = vsql.build_info
+    assert set(info) == {"version", "commit", "date", "v_version", "v_commit", "c_compiler",
+                         "operating_system", "machine"}
+    # The amalgamation is from a release.
+    assert info["version"] == "v" + vsql.vsql_version
+    assert len(info["commit"]) == 40
+    datetime.date.fromisoformat(info["date"])
+    # It's a copy.
+    info["version"] = "x"
+    assert vsql.build_info["version"] != "x"
+
+    with pytest.raises(AttributeError):
+        vsql.nope
+
+
+def test_file_version(path):
+    with vsql.connect(":memory:") as conn:
+        assert conn.file_version == (0, 0)
+    with vsql.connect(path) as conn:
+        read, write = conn.file_version
+        assert 0 < read <= write
+    with pytest.raises(vsql.InterfaceError):
+        conn.file_version
