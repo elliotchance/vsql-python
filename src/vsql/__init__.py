@@ -94,11 +94,11 @@ def connect(database, autocommit=False, isolation_level="READ COMMITTED", read_o
     """Opens a connection to a database file (which is created if it doesn't
     exist) or ":memory:".
 
-    isolation_level and read_only are for the transactions that are started
-    when autocommit is off. vsql's transactions are READ COMMITTED, so
-    "READ UNCOMMITTED" and "READ COMMITTED" are the only isolation levels that
-    can be used, and read_only can't be used (the first statement is a
-    NotSupportedError).
+    isolation_level ("READ UNCOMMITTED", "READ COMMITTED", "REPEATABLE READ"
+    or "SERIALIZABLE") and read_only are for the transactions that are started
+    when autocommit is off. vsql runs READ UNCOMMITTED as READ COMMITTED, and
+    REPEATABLE READ as SERIALIZABLE. A READ UNCOMMITTED transaction is always
+    read only.
     """
 
     return Connection(database, autocommit, isolation_level, read_only)

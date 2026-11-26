@@ -117,8 +117,8 @@ Python 3.9 or later. Wheels are built for macOS (ARM64 and x86-64), Linux
 (ARM64 and x86-64) and Windows (x86-64), so pip doesn't need to compile
 anything.
 
-Building from the source distribution needs a C compiler, and takes about 30
-seconds. On Windows, it needs clang-cl (from [LLVM](https://llvm.org), or the
+Building from the source distribution needs a C compiler, and takes a minute or
+two. On Windows, it needs clang-cl (from [LLVM](https://llvm.org), or the
 "C++ Clang tools for Windows" component of Visual Studio) as well as MSVC, since
 the C that V generates doesn't compile with MSVC. clang-cl is found on the
 `PATH` (or in `C:\Program Files\LLVM\bin`), or set `CC` to its path.

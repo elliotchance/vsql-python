@@ -9,13 +9,15 @@
 #   scripts/update-amalgamation.sh v1.2.3
 #   scripts/update-amalgamation.sh vsql-v1.2.3-amalgamation.zip
 #
-# Only what's needed to compile libvsql is copied (not vsql, the command line
-# program). libvsql_flags.json is generated from the defines and libraries in
-# each vsql_OS_ARCH.mk, which are the ones that V used to build libvsql, and is
-# read by setup.py.
+# Only what's needed to compile libvsql is copied: libvsql.c, libvsql.h and the
+# licenses (not vsql, the command line program, or the files for building with
+# make). libvsql.c is one file for every OS and architecture, which defines
+# everything it needs itself, so it's compiled as it is by setup.py (with
+# -std=gnu11 -fwrapv -w, like the amalgamation's Makefile).
 #
-# The amalgamation isn't compiled file by file. Instead, src/vsql/_libvsql.c
-# includes libvsql.c and vsql_runtime.c from internal/amalgamation.
+# libvsql_flags.json is generated from the libraries in LIBVSQL_FLAGS for each
+# OS and architecture in vsql.mk, which are the ones that V used to build
+# libvsql, and is read by setup.py.
 
 set -euo pipefail
 
@@ -48,42 +50,50 @@ if [ ! -f "$source/libvsql.h" ] || [ ! -f "$source/libvsql.c" ]; then
   exit 1
 fi
 
+if [ ! -f "$source/vsql.mk" ]; then
+  echo "${1:-The latest release} is an older vsql amalgamation (there's no vsql.mk)" >&2
+  exit 1
+fi
+
 rm -rf "$out"
 mkdir -p "$out"
-for file in "$source"/*; do
-  name="$(basename "$file")"
-  case "$name" in
-    # vsql, the command line program, and the files for building with make.
-    vsql.c | vsql_*_amd64.c | vsql_*_arm64.c | Makefile | *.mk | example.c | libvsql.def | libvsql.exports | libvsql.map) ;;
-    *) cp -R "$file" "$out/" ;;
-  esac
+for name in libvsql.c libvsql.h LICENSE LICENSE-V; do
+  cp "$source/$name" "$out/"
 done
 
-# The defines and libraries for each vsql_OS_ARCH.mk, keyed by "OS_ARCH" (such
-# as "macos_arm64").
+# The libraries for each OS and architecture in vsql.mk, keyed by "OS_ARCH"
+# (such as "macos_arm64"). vsql.mk has a block for each one:
+#
+#   ifeq ($(VSQL_OS)_$(VSQL_ARCH),macos_arm64)
+#   LIBVSQL_FLAGS = -ldl -lpthread -lm
+#   endif
 flags="$root/libvsql_flags.json"
 {
   echo "{"
   separator=""
-  for mk in "$source"/vsql_*_*.mk; do
-    os_arch="$(basename "$mk" .mk)"
-    os_arch="${os_arch#vsql_}"
-
-    defines=""
-    libraries=""
-    for arg in $(sed -n 's/^LIBVSQL_FLAGS *= *//p' "$mk"); do
-      case "$arg" in
-        # Options for linking libvsql as a shared library.
-        -Wl,*) ;;
-        -D*) defines="$defines${defines:+, }\"${arg#-D}\"" ;;
-        -l*) libraries="$libraries${libraries:+, }\"${arg#-l}\"" ;;
-        *) echo "Unknown flag in $(basename "$mk"): $arg" >&2; exit 1 ;;
-      esac
-    done
-    printf '%s  "%s": {\n    "defines": [%s],\n    "libraries": [%s]\n  }' \
-      "$separator" "$os_arch" "$defines" "$libraries"
-    separator=$',\n'
-  done
+  os_arch=""
+  while IFS= read -r line; do
+    case "$line" in
+      "ifeq (\$(VSQL_OS)_\$(VSQL_ARCH),"*)
+        os_arch="${line#*,}"
+        os_arch="${os_arch%)}"
+        ;;
+      "LIBVSQL_FLAGS ="*)
+        libraries=""
+        for arg in ${line#*=}; do
+          case "$arg" in
+            # Options for linking libvsql as a shared library.
+            -Wl,*) ;;
+            -l*) libraries="$libraries${libraries:+, }\"${arg#-l}\"" ;;
+            *) echo "Unknown flag for $os_arch in vsql.mk: $arg" >&2; exit 1 ;;
+          esac
+        done
+        printf '%s  "%s": {\n    "libraries": [%s]\n  }' \
+          "$separator" "$os_arch" "$libraries"
+        separator=$',\n'
+        ;;
+    esac
+  done < "$source/vsql.mk"
   echo
   echo "}"
 } > "$flags"

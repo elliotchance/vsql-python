@@ -27,7 +27,9 @@ class Connection:
             self._isolation_level = _isolation_levels[isolation_level]
         except KeyError:
             raise ProgrammingError(f"unknown isolation level: {isolation_level!r}") from None
-        self._access_mode = (lib.SQL_TRANSACTION_READ_ONLY if read_only
+        # A READ UNCOMMITTED transaction must be READ ONLY.
+        self._access_mode = (lib.SQL_TRANSACTION_READ_ONLY
+                             if read_only or isolation_level == "READ UNCOMMITTED"
                              else lib.SQL_TRANSACTION_READ_WRITE)
         self._autocommit = bool(autocommit)
         self._in_transaction = False

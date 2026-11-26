@@ -1,7 +1,7 @@
 # setup.py builds the vsql._libvsql extension module, which compiles libvsql
 # from the amalgamation in internal/amalgamation (see
-# scripts/update-amalgamation.sh) with the defines and libraries that V used
-# for each OS and architecture (libvsql_flags.json).
+# scripts/update-amalgamation.sh) with the libraries that V used for each OS
+# and architecture (libvsql_flags.json).
 
 import json
 import os
@@ -47,22 +47,23 @@ class BuildExt(build_ext):
         super().build_extensions()
 
 
-define_macros = [tuple(d.split("=", 1)) if "=" in d else (d, None) for d in flags["defines"]]
 libraries = flags["libraries"]
 if sys.platform == "win32":
-    extra_compile_args = ["/w"]
+    # libvsql.c is compiled with -std=gnu11 -fwrapv -w (see the amalgamation's
+    # Makefile), since V generates C that relies on signed overflow wrapping and
+    # causes many warnings. clang-cl takes clang's own options with /clang:.
+    extra_compile_args = ["/w", "/clang:-std=gnu11", "/clang:-fwrapv"]
     # The C that V generates for clang on Windows doesn't include stdio.h. It
     # declares the printf functions (such as fprintf and snprintf) itself, which
     # the Universal CRT defines inline, so they're linked from
-    # legacy_stdio_definitions. And it defines the buffering modes for setvbuf
-    # with glibc's values unless they're already defined, which the Universal
-    # CRT rejects (as an invalid parameter, which kills the process).
+    # legacy_stdio_definitions.
     libraries = libraries + ["legacy_stdio_definitions"]
-    define_macros += [("_IOFBF", "0x0000"), ("_IOLBF", "0x0040"), ("_IONBF", "0x0004")]
 else:
-    # The C that V generates for Linux passes a pthread_t as a void*, which is
-    # an error from GCC 14 unless -Wno-int-conversion is given.
-    extra_compile_args = ["-std=gnu11", "-w", "-Wno-int-conversion"]
+    # V generates C that relies on signed overflow wrapping and causes many
+    # warnings (see the amalgamation's Makefile). The C that V has generated for
+    # Linux passed a pthread_t as a void*, which is an error from GCC 14 (that
+    # -w doesn't turn off) unless -Wno-int-conversion is given.
+    extra_compile_args = ["-std=gnu11", "-fwrapv", "-w", "-Wno-int-conversion"]
 
 setup(
     cmdclass={"build_ext": BuildExt},
@@ -71,13 +72,11 @@ setup(
             "vsql._libvsql",
             sources=[
                 "src/vsql/_libvsql.c",
-                # The garbage collector and V's helpers, which have to be
-                # compiled separately from libvsql.c.
-                "internal/amalgamation/vsql_runtime.c",
+                # One file for every OS and architecture, with the garbage
+                # collector and V's helpers.
                 "internal/amalgamation/libvsql.c",
             ],
             include_dirs=["internal/amalgamation"],
-            define_macros=define_macros,
             libraries=libraries,
             extra_compile_args=extra_compile_args,
         )
