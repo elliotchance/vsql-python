@@ -3,7 +3,7 @@ import weakref
 
 from . import _convert
 from . import _libvsql as lib
-from ._errors import InterfaceError, ProgrammingError
+from ._errors import DatabaseError, InterfaceError, ProgrammingError
 
 _isolation_levels = {
     "READ UNCOMMITTED": lib.SQL_TRANSACTION_READ_UNCOMMITTED,
@@ -103,6 +103,17 @@ class Connection:
         lib.start_tran(self._dbc, self._access_mode, self._isolation_level)
         self._in_transaction = True
 
+    def _check_transaction(self, handle_type, handle):
+        """Checks whether the transaction is still active after an error. vsql
+        rolls back the whole transaction for some errors (such as a 40001
+        serialization failure), which closes the cursors, and then the next
+        statement starts a new transaction."""
+
+        if self._in_transaction and not lib.transaction_active(handle_type, handle):
+            self._in_transaction = False
+            for cursor in list(self._cursors):
+                cursor._open = False
+
     def _end(self, commit):
         self._check()
         if not self._in_transaction:
@@ -111,8 +122,12 @@ class Connection:
         # The cursors of the transaction are closed by it.
         for cursor in list(self._cursors):
             cursor._close_results()
-        self._in_transaction = False
-        lib.end_tran(self._dbc, commit)
+        try:
+            lib.end_tran(self._dbc, commit)
+        finally:
+            # A commit that fails may leave the transaction active, or roll
+            # it back.
+            self._in_transaction = lib.transaction_active(lib.SQL_HANDLE_DBC, self._dbc)
 
     def commit(self):
         """Commits the transaction, if there is one."""
@@ -138,7 +153,11 @@ class Connection:
         self._check()
         for cursor in list(self._cursors):
             cursor._close_results()
-        lib.end_savepoint(self._dbc, name, True)
+        try:
+            lib.end_savepoint(self._dbc, name, True)
+        except DatabaseError:
+            self._check_transaction(lib.SQL_HANDLE_DBC, self._dbc)
+            raise
 
     def cursor(self):
         self._check()
@@ -242,15 +261,19 @@ class Cursor:
         if self._stmt is None:
             self._stmt = lib.alloc_handle(lib.SQL_HANDLE_STMT, self.connection._dbc)
 
-        if params or operation == self._prepared:
-            if operation != self._prepared:
+        try:
+            if params or operation == self._prepared:
+                if operation != self._prepared:
+                    self._prepared = None
+                    lib.prepare(self._stmt, operation)
+                    self._prepared = operation
+                lib.execute(self._stmt, params)
+            else:
                 self._prepared = None
-                lib.prepare(self._stmt, operation)
-                self._prepared = operation
-            lib.execute(self._stmt, params)
-        else:
-            self._prepared = None
-            lib.exec_direct(self._stmt, operation)
+                lib.exec_direct(self._stmt, operation)
+        except DatabaseError:
+            self.connection._check_transaction(lib.SQL_HANDLE_STMT, self._stmt)
+            raise
 
         n = lib.num_result_cols(self._stmt)
         if n == 0:
@@ -298,7 +321,11 @@ class Cursor:
                 raise ProgrammingError("the last statement wasn't a query")
             return None
 
-        row = lib.fetch_row(self._stmt, self._kinds)
+        try:
+            row = lib.fetch_row(self._stmt, self._kinds)
+        except DatabaseError:
+            self.connection._check_transaction(lib.SQL_HANDLE_STMT, self._stmt)
+            raise
         if row is None:
             self._close_results()
             return None

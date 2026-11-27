@@ -323,6 +323,22 @@ static PyObject *end_savepoint(PyObject *self, PyObject *args) {
   Py_RETURN_NONE;
 }
 
+// transaction_active(handle_type, handle) -> bool is whether a transaction was
+// active after the last routine called with the handle
+// (SQL_DIAG_TRANSACTION_ACTIVE).
+static PyObject *transaction_active(PyObject *self, PyObject *args) {
+  int handle_type;
+  SQLINTEGER handle, active = 0;
+  if (!PyArg_ParseTuple(args, "ii", &handle_type, &handle)) {
+    return NULL;
+  }
+
+  CALL(handle_type, handle,
+       SQLGetDiagField((SQLSMALLINT)handle_type, handle, 0, SQL_DIAG_TRANSACTION_ACTIVE, &active,
+                       0, NULL));
+  return PyBool_FromLong(active);
+}
+
 // exec_direct(stmt, query)
 static PyObject *exec_direct(PyObject *self, PyObject *args) {
   SQLINTEGER stmt;
@@ -729,6 +745,7 @@ static PyMethodDef methods[] = {
     {"start_tran", start_tran, METH_VARARGS, NULL},
     {"end_tran", end_tran, METH_VARARGS, NULL},
     {"end_savepoint", end_savepoint, METH_VARARGS, NULL},
+    {"transaction_active", transaction_active, METH_VARARGS, NULL},
     {"get_info", get_info, METH_VARARGS, NULL},
     {"exec_direct", exec_direct, METH_VARARGS, NULL},
     {"prepare", prepare, METH_VARARGS, NULL},
