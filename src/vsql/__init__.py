@@ -86,6 +86,8 @@ it as a tuple of ints, and build_info is a dict of how it was built (its
 """
 
 import datetime
+import sysconfig
+import threading
 import time
 
 from . import _convert, _libvsql
@@ -115,6 +117,19 @@ paramstyle = "qmark"
 
 _libvsql.set_error_factory(error)
 _libvsql.set_warning_handler(_warn)
+
+
+def _set_thread_stack_size(host_type):
+    """musl (Alpine and musllinux) gives a thread 128 KiB of stack, which isn't
+    enough for libvsql, so a thread that uses a connection would crash. Threads
+    get 1 MiB on musl (like Alpine's own Python), unless a size has been set
+    already."""
+
+    if "musl" in (host_type or "") and threading.stack_size() == 0:
+        threading.stack_size(1024 * 1024)
+
+
+_set_thread_stack_size(sysconfig.get_config_var("HOST_GNU_TYPE"))
 
 
 def connect(database, autocommit=False, isolation_level="READ COMMITTED", read_only=False):
