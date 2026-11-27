@@ -1,6 +1,7 @@
 # The exceptions of PEP 249. An error from vsql is the exception for the class
 # of its SQLSTATE (the first two characters), and has the SQLSTATE as its
-# sqlstate attribute.
+# sqlstate attribute, and the other fields of its diagnostic record (such as
+# the constraint that was violated) as the other attributes.
 
 
 class Warning(Exception):  # noqa: A001 (PEP 249 requires this name)
@@ -12,12 +13,38 @@ class Error(Exception):
 
     sqlstate is the SQLSTATE of an error from vsql (such as "42P01" for an
     undefined table), or None for an error from the module itself.
+
+    These are the object that the error is about, or None if it isn't about
+    one (or the error isn't from vsql):
+
+        constraint_catalog, constraint_schema, constraint_name
+            the constraint that was violated (such as a PRIMARY KEY or CHECK)
+        catalog_name, schema_name, table_name
+            the table (such as the table of a constraint, or one that doesn't
+            exist)
+        column_name
+            the column (such as one that doesn't exist)
+        cursor_name
+            the cursor (for an invalid cursor state)
     """
 
-    def __init__(self, message, sqlstate=None):
+    constraint_catalog = constraint_schema = constraint_name = None
+    catalog_name = schema_name = table_name = column_name = cursor_name = None
+
+    def __init__(self, message, sqlstate=None, *, constraint_catalog=None,
+                 constraint_schema=None, constraint_name=None, catalog_name=None,
+                 schema_name=None, table_name=None, column_name=None, cursor_name=None):
         super().__init__(message)
         self.message = message
         self.sqlstate = sqlstate
+        self.constraint_catalog = constraint_catalog
+        self.constraint_schema = constraint_schema
+        self.constraint_name = constraint_name
+        self.catalog_name = catalog_name
+        self.schema_name = schema_name
+        self.table_name = table_name
+        self.column_name = column_name
+        self.cursor_name = cursor_name
 
     def __str__(self):
         if self.sqlstate is None:
@@ -76,6 +103,7 @@ _classes = {
     "2B": ProgrammingError,  # dependent privilege descriptors still exist
     "2D": OperationalError,  # invalid transaction termination
     "34": ProgrammingError,  # invalid cursor name
+    "3B": ProgrammingError,  # savepoint exception
     "3D": ProgrammingError,  # invalid catalog name
     "3F": ProgrammingError,  # invalid schema name
     "40": OperationalError,  # transaction rollback
@@ -94,9 +122,10 @@ _states = {
 }
 
 
-def error(sqlstate, message):
-    """The exception for an error from vsql."""
+def error(sqlstate, message, **fields):
+    """The exception for an error from vsql, with the fields of its diagnostic
+    record (such as constraint_name) that aren't empty."""
 
     cls = _states.get(sqlstate) or _classes.get(sqlstate[:2], DatabaseError)
 
-    return cls(message, sqlstate)
+    return cls(message, sqlstate, **fields)

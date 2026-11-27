@@ -8,8 +8,8 @@
 // routine runs.
 //
 // When a routine fails, the exception is made by the function given to
-// set_error_factory, from the SQLSTATE and message of the first diagnostic
-// record.
+// set_error_factory, from the SQLSTATE, message and other fields (such as the
+// constraint that was violated) of the first diagnostic record.
 
 #define PY_SSIZE_T_CLEAN
 #include <Python.h>
@@ -29,19 +29,84 @@ static inline PyObject *Py_NewRef(PyObject *o) {
 
 static PyObject *error_factory = NULL;
 
-// raise_error raises the exception for an SQLSTATE and message.
-static void raise_error(const char *sqlstate, const char *message, Py_ssize_t length) {
+// raise_error raises the exception for an SQLSTATE and message, with the other
+// fields of its diagnostic record (a dict, or NULL).
+static void raise_error_fields(const char *sqlstate, const char *message, Py_ssize_t length,
+                               PyObject *fields) {
   if (error_factory == NULL) {
     PyErr_Format(PyExc_RuntimeError, "vsql: %.*s (SQLSTATE %s)", (int)length, message,
                  sqlstate);
     return;
   }
 
-  PyObject *err = PyObject_CallFunction(error_factory, "ss#", sqlstate, message, length);
+  if (length < 0) {
+    length = (Py_ssize_t)strlen(message);
+  }
+  PyObject *args = Py_BuildValue("(ss#)", sqlstate, message, length);
+  if (args == NULL) {
+    return;
+  }
+  PyObject *err = PyObject_Call(error_factory, args, fields);
+  Py_DECREF(args);
   if (err != NULL) {
     PyErr_SetObject((PyObject *)Py_TYPE(err), err);
     Py_DECREF(err);
   }
+}
+
+static void raise_error(const char *sqlstate, const char *message, Py_ssize_t length) {
+  raise_error_fields(sqlstate, message, length, NULL);
+}
+
+// The string fields of a diagnostic record that are given to the error factory
+// (as keyword arguments) when they aren't empty.
+static const struct {
+  const char *name;
+  SQLSMALLINT field;
+} diag_fields[] = {
+    {"constraint_catalog", SQL_DIAG_CONSTRAINT_CATALOG},
+    {"constraint_schema", SQL_DIAG_CONSTRAINT_SCHEMA},
+    {"constraint_name", SQL_DIAG_CONSTRAINT_NAME},
+    {"catalog_name", SQL_DIAG_CATALOG_NAME},
+    {"schema_name", SQL_DIAG_SCHEMA_NAME},
+    {"table_name", SQL_DIAG_TABLE_NAME},
+    {"column_name", SQL_DIAG_COLUMN_NAME},
+    {"cursor_name", SQL_DIAG_CURSOR_NAME},
+    {NULL, 0},
+};
+
+// get_diag_fields returns a dict of the non-empty diag_fields of the first
+// diagnostic record, or NULL with an exception.
+static PyObject *get_diag_fields(SQLSMALLINT handle_type, SQLINTEGER handle) {
+  PyObject *fields = PyDict_New();
+  if (fields == NULL) {
+    return NULL;
+  }
+
+  for (int i = 0; diag_fields[i].name != NULL; i++) {
+    // An identifier is at most 128 characters (of up to 4 octets each).
+    SQLCHAR value[516];
+    SQLSMALLINT length = 0;
+    SQLRETURN rc;
+    Py_BEGIN_ALLOW_THREADS
+    rc = SQLGetDiagField(handle_type, handle, 1, diag_fields[i].field, value, sizeof(value),
+                         &length);
+    Py_END_ALLOW_THREADS
+    if ((rc != SQL_SUCCESS && rc != SQL_SUCCESS_WITH_INFO) || value[0] == 0) {
+      continue;
+    }
+
+    PyObject *s = PyUnicode_DecodeUTF8((const char *)value, (Py_ssize_t)strlen((char *)value),
+                                       "replace");
+    if (s == NULL || PyDict_SetItemString(fields, diag_fields[i].name, s) < 0) {
+      Py_XDECREF(s);
+      Py_DECREF(fields);
+      return NULL;
+    }
+    Py_DECREF(s);
+  }
+
+  return fields;
 }
 
 // check returns 0 for a return code that isn't an error (SQL_NO_DATA isn't),
@@ -84,7 +149,11 @@ static int check(SQLRETURN rc, SQLSMALLINT handle_type, SQLINTEGER handle) {
       continue;
     }
 
-    raise_error((const char *)sqlstate, (const char *)message, length);
+    PyObject *fields = get_diag_fields(handle_type, handle);
+    if (fields != NULL) {
+      raise_error_fields((const char *)sqlstate, (const char *)message, length, fields);
+      Py_DECREF(fields);
+    }
     free(message);
     return -1;
   }
@@ -212,6 +281,48 @@ static PyObject *end_tran(PyObject *self, PyObject *args) {
   Py_RETURN_NONE;
 }
 
+// get_info(dbc, info_type, is_string) -> str or int reads an SQLGetInfo
+// InfoType, which is a string or an SQLSMALLINT.
+static PyObject *get_info(PyObject *self, PyObject *args) {
+  SQLINTEGER dbc;
+  int info_type, is_string;
+  if (!PyArg_ParseTuple(args, "iip", &dbc, &info_type, &is_string)) {
+    return NULL;
+  }
+
+  if (!is_string) {
+    SQLSMALLINT value = 0;
+    CALL(SQL_HANDLE_DBC, dbc, SQLGetInfo(dbc, (SQLSMALLINT)info_type, &value, 0, NULL));
+    return PyLong_FromLong(value);
+  }
+
+  SQLCHAR value[256];
+  SQLSMALLINT length = 0;
+  CALL(SQL_HANDLE_DBC, dbc,
+       SQLGetInfo(dbc, (SQLSMALLINT)info_type, value, sizeof(value), &length));
+  return PyUnicode_DecodeUTF8((const char *)value, (Py_ssize_t)strlen((char *)value), NULL);
+}
+
+// end_savepoint(dbc, name, rollback) rolls back to (or releases) a savepoint of
+// the transaction, which is named by the SQL_ATTR_SAVEPOINT_NAME attribute.
+static PyObject *end_savepoint(PyObject *self, PyObject *args) {
+  SQLINTEGER dbc;
+  const char *name;
+  Py_ssize_t length;
+  int rollback;
+  if (!PyArg_ParseTuple(args, "is#p", &dbc, &name, &length, &rollback)) {
+    return NULL;
+  }
+
+  // libvsql copies the name.
+  CALL(SQL_HANDLE_DBC, dbc,
+       SQLSetConnectAttr(dbc, SQL_ATTR_SAVEPOINT_NAME, (SQLPOINTER)name, (SQLINTEGER)length));
+  CALL(SQL_HANDLE_DBC, dbc,
+       SQLEndTran(SQL_HANDLE_DBC, dbc,
+                  rollback ? SQL_SAVEPOINT_NAME_ROLLBACK : SQL_SAVEPOINT_NAME_RELEASE));
+  Py_RETURN_NONE;
+}
+
 // exec_direct(stmt, query)
 static PyObject *exec_direct(PyObject *self, PyObject *args) {
   SQLINTEGER stmt;
@@ -247,8 +358,8 @@ typedef union {
 // execute(stmt, params) executes the prepared statement with the parameters,
 // which are bound for this execution only. Each parameter is a tuple of
 // (value_type, parameter_type, column_size, decimal_digits, value), where the
-// value is None, an int (SQL_BIGINT), a float (SQL_DOUBLE) or UTF-8 bytes
-// (SQL_CHAR).
+// value is None, an int (SQL_BIGINT), a float (SQL_DOUBLE), UTF-8 bytes
+// (SQL_CHAR) or the octets of a binary string (SQL_BINARY).
 static PyObject *execute(PyObject *self, PyObject *args) {
   SQLINTEGER stmt;
   PyObject *params;
@@ -294,6 +405,17 @@ static PyObject *execute(PyObject *self, PyObject *args) {
       }
       pointer = &numbers[i].d;
       buffer_length = sizeof(SQLDOUBLE);
+    } else if (value_type == SQL_BINARY) {
+      // The octets, which can be empty (unlike a string), are kept alive by
+      // params until SQLExecute returns.
+      char *s;
+      Py_ssize_t length;
+      if (PyBytes_AsStringAndSize(value, &s, &length) < 0) {
+        goto done;
+      }
+      pointer = s;
+      buffer_length = (SQLINTEGER)length;
+      inds[i] = (SQLINTEGER)length;
     } else {
       // The bytes are kept alive by params until SQLExecute returns.
       char *s;
@@ -402,6 +524,20 @@ static PyObject *describe_col(PyObject *self, PyObject *args) {
   }
 }
 
+// col_attribute(stmt, n, field) -> int reads a numeric field of the IRD for a
+// column (such as SQL_DESC_DATETIME_INTERVAL_PRECISION).
+static PyObject *col_attribute(PyObject *self, PyObject *args) {
+  SQLINTEGER stmt, value = 0;
+  int n, field;
+  if (!PyArg_ParseTuple(args, "iii", &stmt, &n, &field)) {
+    return NULL;
+  }
+
+  CALL(SQL_HANDLE_STMT, stmt,
+       SQLColAttribute(stmt, (SQLSMALLINT)n, (SQLSMALLINT)field, NULL, 0, NULL, &value));
+  return PyLong_FromLong(value);
+}
+
 // close_cursor(stmt)
 static PyObject *close_cursor(PyObject *self, PyObject *args) {
   SQLINTEGER stmt;
@@ -458,10 +594,55 @@ static PyObject *get_string(SQLINTEGER stmt, SQLSMALLINT n) {
   }
 }
 
+// get_binary reads a column as SQL_BINARY, in pieces like get_string. The
+// octets aren't null terminated, and the length of the rest of the value
+// (ind) includes the piece that was read.
+static PyObject *get_binary(SQLINTEGER stmt, SQLSMALLINT n) {
+  char small[256];
+  char *buf = small, *large = NULL;
+  SQLINTEGER size = sizeof(small), ind = 0;
+  size_t length = 0;
+  for (;;) {
+    SQLINTEGER available = size - (SQLINTEGER)length;
+    SQLRETURN rc;
+    Py_BEGIN_ALLOW_THREADS
+    rc = SQLGetData(stmt, n, SQL_BINARY, buf + length, available, &ind);
+    Py_END_ALLOW_THREADS
+    if (check(rc, SQL_HANDLE_STMT, stmt) < 0) {
+      PyMem_Free(large);
+      return NULL;
+    }
+    if (ind == SQL_NULL_DATA) {
+      PyMem_Free(large);
+      Py_RETURN_NONE;
+    }
+
+    // The rest of the value (ind) didn't fit, so the buffer is full.
+    if (rc == SQL_SUCCESS_WITH_INFO && ind > available) {
+      size_t new_size = length + (size_t)ind;
+      char *grown = PyMem_Malloc(new_size);
+      if (grown == NULL) {
+        PyMem_Free(large);
+        return PyErr_NoMemory();
+      }
+      memcpy(grown, buf, length + (size_t)available);
+      PyMem_Free(large);
+      buf = large = grown;
+      length += (size_t)available;
+      size = (SQLINTEGER)new_size;
+      continue;
+    }
+
+    PyObject *b = PyBytes_FromStringAndSize(buf, (Py_ssize_t)(length + (size_t)ind));
+    PyMem_Free(large);
+    return b;
+  }
+}
+
 // fetch_row(stmt, kinds) -> tuple or None fetches the next row, it's None
 // after the last row. kinds has a character for how each column is read: 'i'
-// (SQL_BIGINT), 'd' (SQL_DOUBLE), 'r' (SQL_REAL) or 's' (SQL_CHAR). A NULL is
-// None.
+// (SQL_BIGINT), 'd' (SQL_DOUBLE), 'r' (SQL_REAL), 'b' (SQL_BINARY, as bytes)
+// or 's' (SQL_CHAR). A NULL is None.
 static PyObject *fetch_row(PyObject *self, PyObject *args) {
   SQLINTEGER stmt;
   const char *kinds;
@@ -521,6 +702,9 @@ static PyObject *fetch_row(PyObject *self, PyObject *args) {
       }
       break;
     }
+    case 'b':
+      value = get_binary(stmt, column);
+      break;
     default:
       value = get_string(stmt, column);
       break;
@@ -544,12 +728,15 @@ static PyMethodDef methods[] = {
     {"set_autocommit", set_autocommit, METH_VARARGS, NULL},
     {"start_tran", start_tran, METH_VARARGS, NULL},
     {"end_tran", end_tran, METH_VARARGS, NULL},
+    {"end_savepoint", end_savepoint, METH_VARARGS, NULL},
+    {"get_info", get_info, METH_VARARGS, NULL},
     {"exec_direct", exec_direct, METH_VARARGS, NULL},
     {"prepare", prepare, METH_VARARGS, NULL},
     {"execute", execute, METH_VARARGS, NULL},
     {"row_count", row_count, METH_VARARGS, NULL},
     {"num_result_cols", num_result_cols, METH_VARARGS, NULL},
     {"describe_col", describe_col, METH_VARARGS, NULL},
+    {"col_attribute", col_attribute, METH_VARARGS, NULL},
     {"close_cursor", close_cursor, METH_VARARGS, NULL},
     {"fetch_row", fetch_row, METH_VARARGS, NULL},
     {NULL, NULL, 0, NULL},
@@ -584,6 +771,36 @@ static const struct {
     {"SQL_TYPE_TIMESTAMP", SQL_TYPE_TIMESTAMP},
     {"SQL_TYPE_TIME_WITH_TIMEZONE", SQL_TYPE_TIME_WITH_TIMEZONE},
     {"SQL_TYPE_TIMESTAMP_WITH_TIMEZONE", SQL_TYPE_TIMESTAMP_WITH_TIMEZONE},
+    {"SQL_DECFLOAT", SQL_DECFLOAT},
+    {"SQL_BINARY", SQL_BINARY},
+    {"SQL_VARBINARY", SQL_VARBINARY},
+    {"SQL_BLOB", SQL_BLOB},
+    {"SQL_CLOB", SQL_CLOB},
+    {"SQL_INTERVAL_YEAR", SQL_INTERVAL_YEAR},
+    {"SQL_INTERVAL_MONTH", SQL_INTERVAL_MONTH},
+    {"SQL_INTERVAL_DAY", SQL_INTERVAL_DAY},
+    {"SQL_INTERVAL_HOUR", SQL_INTERVAL_HOUR},
+    {"SQL_INTERVAL_MINUTE", SQL_INTERVAL_MINUTE},
+    {"SQL_INTERVAL_SECOND", SQL_INTERVAL_SECOND},
+    {"SQL_INTERVAL_YEAR_TO_MONTH", SQL_INTERVAL_YEAR_TO_MONTH},
+    {"SQL_INTERVAL_DAY_TO_HOUR", SQL_INTERVAL_DAY_TO_HOUR},
+    {"SQL_INTERVAL_DAY_TO_MINUTE", SQL_INTERVAL_DAY_TO_MINUTE},
+    {"SQL_INTERVAL_DAY_TO_SECOND", SQL_INTERVAL_DAY_TO_SECOND},
+    {"SQL_INTERVAL_HOUR_TO_MINUTE", SQL_INTERVAL_HOUR_TO_MINUTE},
+    {"SQL_INTERVAL_HOUR_TO_SECOND", SQL_INTERVAL_HOUR_TO_SECOND},
+    {"SQL_INTERVAL_MINUTE_TO_SECOND", SQL_INTERVAL_MINUTE_TO_SECOND},
+    {"SQL_DESC_DATETIME_INTERVAL_PRECISION", SQL_DESC_DATETIME_INTERVAL_PRECISION},
+    {"SQL_DBMS_VERSION", SQL_DBMS_VERSION},
+    {"SQL_VSQL_BUILD_VERSION", SQL_VSQL_BUILD_VERSION},
+    {"SQL_VSQL_BUILD_COMMIT", SQL_VSQL_BUILD_COMMIT},
+    {"SQL_VSQL_BUILD_DATE", SQL_VSQL_BUILD_DATE},
+    {"SQL_VSQL_BUILD_V_VERSION", SQL_VSQL_BUILD_V_VERSION},
+    {"SQL_VSQL_BUILD_V_COMMIT", SQL_VSQL_BUILD_V_COMMIT},
+    {"SQL_VSQL_BUILD_C_COMPILER", SQL_VSQL_BUILD_C_COMPILER},
+    {"SQL_VSQL_OPERATING_SYSTEM", SQL_VSQL_OPERATING_SYSTEM},
+    {"SQL_VSQL_MACHINE", SQL_VSQL_MACHINE},
+    {"SQL_VSQL_FILE_READ_VERSION", SQL_VSQL_FILE_READ_VERSION},
+    {"SQL_VSQL_FILE_WRITE_VERSION", SQL_VSQL_FILE_WRITE_VERSION},
     {"SQL_NO_NULLS", SQL_NO_NULLS},
     {"SQL_NULLABLE", SQL_NULLABLE},
     {"SQL_TRANSACTION_READ_ONLY", SQL_TRANSACTION_READ_ONLY},
