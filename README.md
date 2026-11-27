@@ -47,6 +47,9 @@ been fetched (or its cursor is closed, or executes another statement), so a
 cursor that's left part way through a query can block other connections that
 write to the database file.
 
+A query's cursor stays open after `conn.commit()` (vsql's cursors are
+holdable), so its rows can still be fetched, but `conn.rollback()` closes it.
+
 ### Isolation levels
 
 ```python
@@ -76,8 +79,7 @@ doesn't allow `--` comments (`42000`), but `/* ... */` comments work.
 
 A savepoint is made by executing `SAVEPOINT`, and released by executing
 `RELEASE SAVEPOINT`. Like `ROLLBACK`, `ROLLBACK TO SAVEPOINT` can't be executed
-as a statement, so it's `conn.rollback_to_savepoint(name)` instead (which
-closes the cursors of the connection):
+as a statement, so it's `conn.rollback_to_savepoint(name)` instead:
 
 ```python
 cur.execute("INSERT INTO foo (x) VALUES (1)")

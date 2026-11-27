@@ -613,8 +613,9 @@ def test_savepoints(path):
     conn.execute("INSERT INTO foo (x) VALUES (3)")
     cur = conn.execute("SELECT x FROM foo")
     conn.rollback_to_savepoint('"b"')
-    # The rollback closed the cursors.
-    assert cur.fetchone() is None
+    # The cursors stay open (they're holdable), and see the rows from when
+    # the query was executed.
+    assert cur.fetchall() == [(1,), (2,), (3,)]
     assert conn.in_transaction
     assert conn.execute("SELECT x FROM foo ORDER BY x").fetchall() == [(1,), (2,)]
 
@@ -639,10 +640,26 @@ def test_savepoints(path):
         assert conn.execute("SELECT x FROM foo").fetchall() == [(1,)]
 
 
-def test_commit_closes_cursors(path):
+def test_cursors_stay_open_after_commit(path):
+    with vsql.connect(path) as conn:
+        conn.execute("CREATE TABLE t (x INTEGER)")
+        conn.cursor().executemany("INSERT INTO t (x) VALUES (?)", [[1], [2], [3]])
+        conn.commit()
+
+        # A loop that commits as it goes sees every row.
+        seen = []
+        for (x,) in conn.execute("SELECT x FROM t ORDER BY x"):
+            seen.append(x)
+            conn.execute("UPDATE t SET x = x * 10 WHERE x = ?", [x])
+            conn.commit()
+        assert seen == [1, 2, 3]
+        assert conn.execute("SELECT x FROM t ORDER BY x").fetchall() == [(10,), (20,), (30,)]
+
+
+def test_rollback_closes_cursors(path):
     with vsql.connect(path) as conn:
         cur = conn.execute("VALUES 1")
-        conn.commit()
+        conn.rollback()
         assert cur.fetchone() is None
         assert cur.execute("VALUES 2").fetchone() == (2,)
 

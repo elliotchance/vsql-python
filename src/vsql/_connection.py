@@ -120,9 +120,11 @@ class Connection:
         if not self._in_transaction:
             return
 
-        # The cursors of the transaction are closed by it.
-        for cursor in list(self._cursors):
-            cursor._close_results()
+        # A rollback closes the cursors, but they stay open after a commit
+        # (vsql's cursors are holdable).
+        if not commit:
+            for cursor in list(self._cursors):
+                cursor._close_results()
         try:
             lib.end_tran(self._dbc, commit)
         finally:
@@ -131,12 +133,14 @@ class Connection:
             self._in_transaction = lib.transaction_active(lib.SQL_HANDLE_DBC, self._dbc)
 
     def commit(self):
-        """Commits the transaction, if there is one."""
+        """Commits the transaction, if there is one. The rows of a query that
+        haven't been fetched can still be fetched after it."""
 
         self._end(True)
 
     def rollback(self):
-        """Rolls back the transaction, if there is one."""
+        """Rolls back the transaction, if there is one, which closes the
+        cursors."""
 
         self._end(False)
 
@@ -144,16 +148,14 @@ class Connection:
         """Rolls back the transaction to a savepoint, which was made by
         executing SAVEPOINT. vsql doesn't allow ROLLBACK TO SAVEPOINT as a
         statement (like ROLLBACK), so this is how it's done. The cursors of the
-        connection are closed. RELEASE SAVEPOINT can be executed as a
-        statement.
+        connection stay open (vsql's cursors are holdable). RELEASE SAVEPOINT
+        can be executed as a statement.
 
         The name is an identifier, so a name that isn't quoted is upper case
         (such as "foo", which is FOO), and a quoted name (such as '"foo"') is
         what's inside the quotes."""
 
         self._check()
-        for cursor in list(self._cursors):
-            cursor._close_results()
         try:
             lib.end_savepoint(self._dbc, name, True)
         except DatabaseError:
