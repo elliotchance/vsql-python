@@ -520,6 +520,43 @@ def test_transactions(path):
     assert count() == 4
 
 
+
+def test_transaction_rolled_back_by_vsql(path):
+    """A 40001 rolls back the whole transaction, so the next statement starts a
+    new one (which rollback undoes). Other errors only undo the statement."""
+
+    with vsql.connect(path) as conn:
+        conn.execute("CREATE TABLE t (x INTEGER PRIMARY KEY)")
+        conn.execute("INSERT INTO t (x) VALUES (1)")
+
+    a, b = vsql.connect(path), vsql.connect(path)
+    a.execute("UPDATE t SET x = 100 WHERE x = 1")
+    b.execute("INSERT INTO t (x) VALUES (50)")
+    cur = b.execute("SELECT x FROM t")
+    with pytest.raises(vsql.OperationalError) as e:
+        b.execute("UPDATE t SET x = 200 WHERE x = 1")
+    assert e.value.sqlstate == "40001"
+    assert not b.in_transaction
+    assert cur.fetchone() is None
+    a.commit()
+
+    b.execute("INSERT INTO t (x) VALUES (60)")
+    assert b.in_transaction
+    b.rollback()
+    assert not b.in_transaction
+
+    # A unique violation only undoes the statement.
+    b.execute("INSERT INTO t (x) VALUES (70)")
+    with pytest.raises(vsql.IntegrityError):
+        b.execute("INSERT INTO t (x) VALUES (70)")
+    assert b.in_transaction
+    b.commit()
+    a.close()
+    b.close()
+
+    with vsql.connect(path) as conn:
+        assert conn.execute("SELECT x FROM t ORDER BY x").fetchall() == [(70,), (100,)]
+
 def test_savepoints(path):
     conn = vsql.connect(path)
     conn.execute("CREATE TABLE foo (x INTEGER)")
