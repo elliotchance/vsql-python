@@ -382,8 +382,10 @@ def test_rowcount(conn):
     assert cur.lastrowid is None
     assert conn.execute("SELECT * FROM foo").rowcount == -1
 
-    cur.executemany("INSERT INTO foo (x) VALUES (?)", [[3], [4], [5]])
+    assert cur.executemany("INSERT INTO foo (x) VALUES (?)", [[3], [4], [5]]) is cur
     assert cur.rowcount == 3
+    assert conn.executemany("INSERT INTO foo (x) VALUES (?)", [[6], [7]]).rowcount == 2
+    assert conn.executemany("INSERT INTO foo (x) VALUES (?)", []).rowcount == 0
 
 
 def test_fetch(conn):
