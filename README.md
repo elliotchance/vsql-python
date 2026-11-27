@@ -283,6 +283,23 @@ two. On Windows, it needs clang-cl (from [LLVM](https://llvm.org), or the
 the C that V generates doesn't compile with MSVC. clang-cl is found on the
 `PATH` (or in `C:\Program Files\LLVM\bin`), or set `CC` to its path.
 
+## Tests
+
+```sh
+pip install -e . pytest && pytest tests
+```
+
+The tests must cover every line and branch of the Python modules, and every
+line of the extension module (`src/vsql/_libvsql.c`), which CI checks with:
+
+```sh
+pip install pytest pytest-cov && scripts/coverage.sh
+```
+
+`tests/test_libvsql.py` calls the extension module directly, for the errors
+that the rest of the package never causes, and runs it out of memory (with
+`_testcapi.set_nomemory`).
+
 ## Updating vsql
 
 `internal/amalgamation` is the libvsql C from a vsql release
