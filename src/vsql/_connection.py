@@ -171,6 +171,12 @@ class Connection:
 
         return self.cursor().execute(operation, parameters)
 
+    def executemany(self, operation, seq_of_parameters):
+        """Executes a statement for each sequence of parameters with a new
+        cursor, which is returned."""
+
+        return self.cursor().executemany(operation, seq_of_parameters)
+
     def close(self):
         """Closes the connection and its cursors. A transaction that hasn't been
         committed is rolled back. It does nothing if it's already closed."""
@@ -302,8 +308,9 @@ class Cursor:
 
     def executemany(self, operation, seq_of_parameters):
         """Executes a statement for each sequence of parameters. rowcount is
-        the total of the rows affected."""
+        the total of the rows affected. It returns the cursor."""
 
+        self._check()
         total = 0
         for parameters in seq_of_parameters:
             self.execute(operation, parameters)
@@ -311,6 +318,8 @@ class Cursor:
                 raise ProgrammingError("executemany can't be used for a query")
             total += max(self.rowcount, 0)
         self.rowcount = total
+
+        return self
 
     def fetchone(self):
         """The next row as a tuple, or None if there are no more."""
