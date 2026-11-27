@@ -51,3 +51,12 @@ archs = ["native"]
 # The runner's own architecture, x86-64 or ARM64 (libvsql doesn't support 32
 # bit).
 archs = ["native"]
+
+[tool.coverage.run]
+branch = true
+source = ["vsql"]
+
+[tool.coverage.report]
+fail_under = 100
+show_missing = true
+skip_covered = true

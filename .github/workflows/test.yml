@@ -44,3 +44,16 @@ jobs:
           pip install mypy
           python -m mypy.stubtest vsql --ignore-missing-stub
           mypy --strict example/main.py
+
+  coverage:
+    name: Coverage
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.14"
+      - run: pip install pytest pytest-cov
+      # Every line and branch of the Python modules, and every line of
+      # _libvsql.c, must be covered by the tests.
+      - run: scripts/coverage.sh

@@ -111,14 +111,14 @@ static int warn(SQLRETURN rc, SQLSMALLINT handle_type, SQLINTEGER handle) {
 // fields of its diagnostic record (a dict, or NULL).
 static void raise_error_fields(const char *sqlstate, const char *message, Py_ssize_t length,
                                PyObject *fields) {
-  if (error_factory == NULL) {
-    PyErr_Format(PyExc_RuntimeError, "vsql: %.*s (SQLSTATE %s)", (int)length, message,
-                 sqlstate);
-    return;
-  }
-
   if (length < 0) {
     length = (Py_ssize_t)strlen(message);
+  }
+
+  if (error_factory == NULL) {
+    // The message ends with a NUL. PyErr_Format only has %.*s from Python 3.12.
+    PyErr_Format(PyExc_RuntimeError, "vsql: %s (SQLSTATE %s)", message, sqlstate);
+    return;
   }
   PyObject *args = Py_BuildValue("(ss#)", sqlstate, message, length);
   if (args == NULL) {
@@ -196,34 +196,33 @@ static int check(SQLRETURN rc, SQLSMALLINT handle_type, SQLINTEGER handle) {
   case SQL_SUCCESS_WITH_INFO:
   case SQL_NO_DATA:
     return 0;
-  case SQL_INVALID_HANDLE:
-    raise_error("HY000", "invalid handle", -1);
-    return -1;
   }
 
   SQLCHAR sqlstate[6];
   SQLSMALLINT size = 512, length = 0;
-  SQLCHAR *message = malloc(size);
+  SQLCHAR *message = PyMem_Malloc(size);
   for (;;) {
     if (message == NULL) {
       PyErr_NoMemory();
       return -1;
     }
 
+    // An invalid handle (SQL_INVALID_HANDLE) doesn't have diagnostics.
+    SQLRETURN diag_rc;
     Py_BEGIN_ALLOW_THREADS
-    rc = SQLGetDiagRec(handle_type, handle, 1, sqlstate, NULL, message, size, &length);
+    diag_rc = SQLGetDiagRec(handle_type, handle, 1, sqlstate, NULL, message, size, &length);
     Py_END_ALLOW_THREADS
-    if (rc != SQL_SUCCESS && rc != SQL_SUCCESS_WITH_INFO) {
-      free(message);
-      raise_error("HY000", "unknown error", -1);
+    if (diag_rc != SQL_SUCCESS && diag_rc != SQL_SUCCESS_WITH_INFO) {
+      PyMem_Free(message);
+      raise_error("HY000", rc == SQL_INVALID_HANDLE ? "invalid handle" : "unknown error", -1);
       return -1;
     }
 
     // The message was truncated.
     if (length >= size) {
       size = length + 1;
-      free(message);
-      message = malloc(size);
+      PyMem_Free(message);
+      message = PyMem_Malloc(size);
       continue;
     }
 
@@ -238,7 +237,7 @@ static int check(SQLRETURN rc, SQLSMALLINT handle_type, SQLINTEGER handle) {
       Py_DECREF(records);
     }
     Py_XDECREF(fields);
-    free(message);
+    PyMem_Free(message);
     return -1;
   }
 }
@@ -293,14 +292,11 @@ static PyObject *alloc_handle(PyObject *self, PyObject *args) {
   rc = SQLAllocHandle(handle_type, input, &output);
   Py_END_ALLOW_THREADS
 
-  // An environment doesn't have an input handle with diagnostics.
-  if (handle_type == SQL_HANDLE_ENV) {
-    if (rc != SQL_SUCCESS) {
-      raise_error("HY001", "can't allocate an environment", -1);
-      return NULL;
-    }
-  } else if (check(rc, handle_type == SQL_HANDLE_DBC ? SQL_HANDLE_ENV : SQL_HANDLE_DBC,
-                   input) < 0) {
+  // The diagnostics are on the input handle (a connection's environment, or a
+  // statement's connection). An environment doesn't have one, so it would be
+  // an unknown error (but libvsql only fails to allocate one without an
+  // OutputHandle).
+  if (check(rc, handle_type == SQL_HANDLE_STMT ? SQL_HANDLE_DBC : SQL_HANDLE_ENV, input) < 0) {
     return NULL;
   }
 
@@ -615,7 +611,7 @@ static PyObject *describe_col(PyObject *self, PyObject *args) {
   SQLSMALLINT size = 129, length = 0, data_type = 0, decimal_digits = 0, nullable = 0;
   SQLINTEGER column_size = 0;
   for (;;) {
-    SQLCHAR *name = malloc(size);
+    SQLCHAR *name = PyMem_Malloc(size);
     if (name == NULL) {
       return PyErr_NoMemory();
     }
@@ -626,20 +622,20 @@ static PyObject *describe_col(PyObject *self, PyObject *args) {
                         &decimal_digits, &nullable);
     Py_END_ALLOW_THREADS
     if (check(rc, SQL_HANDLE_STMT, stmt) < 0) {
-      free(name);
+      PyMem_Free(name);
       return NULL;
     }
 
     // The name was truncated.
     if (length >= size) {
       size = length + 1;
-      free(name);
+      PyMem_Free(name);
       continue;
     }
 
     PyObject *result = Py_BuildValue("(s#iiii)", name, (Py_ssize_t)length, data_type,
                                      column_size, decimal_digits, nullable);
-    free(name);
+    PyMem_Free(name);
     return result;
   }
 }
