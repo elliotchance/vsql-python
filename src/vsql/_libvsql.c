@@ -9,7 +9,10 @@
 //
 // When a routine fails, the exception is made by the function given to
 // set_error_factory, from the SQLSTATE, message and other fields (such as the
-// constraint that was violated) of the first diagnostic record.
+// constraint that was violated) of the first diagnostic record, and every
+// record (diagnostics). When a statement completes with a warning
+// (SQL_SUCCESS_WITH_INFO), the function given to set_warning_handler is called
+// with the SQLSTATE and message of each record.
 
 #define PY_SSIZE_T_CLEAN
 #include <Python.h>
@@ -28,6 +31,81 @@ static inline PyObject *Py_NewRef(PyObject *o) {
 #endif
 
 static PyObject *error_factory = NULL;
+static PyObject *warning_handler = NULL;
+
+// read_records returns a list of (sqlstate, message) for each diagnostic
+// record of the last routine called with the handle, or NULL with an
+// exception.
+static PyObject *read_records(SQLSMALLINT handle_type, SQLINTEGER handle) {
+  PyObject *records = PyList_New(0);
+  if (records == NULL) {
+    return NULL;
+  }
+
+  for (SQLSMALLINT i = 1;; i++) {
+    SQLCHAR sqlstate[6];
+    SQLSMALLINT size = 512, length = 0;
+    SQLCHAR *message = NULL;
+    SQLRETURN rc;
+    for (;;) {
+      message = PyMem_Malloc(size);
+      if (message == NULL) {
+        Py_DECREF(records);
+        return PyErr_NoMemory();
+      }
+      Py_BEGIN_ALLOW_THREADS
+      rc = SQLGetDiagRec(handle_type, handle, i, sqlstate, NULL, message, size, &length);
+      Py_END_ALLOW_THREADS
+      // The message was truncated.
+      if ((rc == SQL_SUCCESS || rc == SQL_SUCCESS_WITH_INFO) && length >= size) {
+        size = length + 1;
+        PyMem_Free(message);
+        continue;
+      }
+      break;
+    }
+    if (rc != SQL_SUCCESS && rc != SQL_SUCCESS_WITH_INFO) {
+      PyMem_Free(message);
+      return records;
+    }
+
+    PyObject *record = Py_BuildValue("(sN)", (const char *)sqlstate,
+                                     PyUnicode_DecodeUTF8((const char *)message,
+                                                          (Py_ssize_t)length, "replace"));
+    PyMem_Free(message);
+    if (record == NULL || PyList_Append(records, record) < 0) {
+      Py_XDECREF(record);
+      Py_DECREF(records);
+      return NULL;
+    }
+    Py_DECREF(record);
+  }
+}
+
+// warn calls the warning handler for each diagnostic record if the routine
+// completed with a warning. It returns -1 if the handler raised an exception
+// (such as when warnings are errors), otherwise 0.
+static int warn(SQLRETURN rc, SQLSMALLINT handle_type, SQLINTEGER handle) {
+  if (rc != SQL_SUCCESS_WITH_INFO || warning_handler == NULL) {
+    return 0;
+  }
+
+  PyObject *records = read_records(handle_type, handle);
+  if (records == NULL) {
+    return -1;
+  }
+  for (Py_ssize_t i = 0; i < PyList_GET_SIZE(records); i++) {
+    PyObject *result = PyObject_CallObject(warning_handler, PyList_GET_ITEM(records, i));
+    if (result == NULL) {
+      Py_DECREF(records);
+      return -1;
+    }
+    Py_DECREF(result);
+  }
+  Py_DECREF(records);
+
+  return 0;
+}
 
 // raise_error raises the exception for an SQLSTATE and message, with the other
 // fields of its diagnostic record (a dict, or NULL).
@@ -150,10 +228,16 @@ static int check(SQLRETURN rc, SQLSMALLINT handle_type, SQLINTEGER handle) {
     }
 
     PyObject *fields = get_diag_fields(handle_type, handle);
-    if (fields != NULL) {
-      raise_error_fields((const char *)sqlstate, (const char *)message, length, fields);
-      Py_DECREF(fields);
+    PyObject *records = fields == NULL ? NULL : read_records(handle_type, handle);
+    if (records != NULL) {
+      PyObject *diagnostics = PyList_AsTuple(records);
+      if (diagnostics != NULL && PyDict_SetItemString(fields, "diagnostics", diagnostics) == 0) {
+        raise_error_fields((const char *)sqlstate, (const char *)message, length, fields);
+      }
+      Py_XDECREF(diagnostics);
+      Py_DECREF(records);
     }
+    Py_XDECREF(fields);
     free(message);
     return -1;
   }
@@ -171,6 +255,25 @@ static int check(SQLRETURN rc, SQLSMALLINT handle_type, SQLINTEGER handle) {
       return NULL;                                                             \
     }                                                                          \
   } while (0)
+
+// CALL_WARN is CALL for a routine that can complete with a warning, which is
+// given to the warning handler.
+#define CALL_WARN(handle_type, handle, routine)                                \
+  do {                                                                         \
+    SQLRETURN rc_;                                                             \
+    Py_BEGIN_ALLOW_THREADS                                                     \
+    rc_ = (routine);                                                           \
+    Py_END_ALLOW_THREADS                                                       \
+    if (check(rc_, (handle_type), (handle)) < 0 ||                             \
+        warn(rc_, (handle_type), (handle)) < 0) {                              \
+      return NULL;                                                             \
+    }                                                                          \
+  } while (0)
+
+static PyObject *set_warning_handler(PyObject *self, PyObject *handler) {
+  Py_XSETREF(warning_handler, Py_NewRef(handler));
+  Py_RETURN_NONE;
+}
 
 static PyObject *set_error_factory(PyObject *self, PyObject *factory) {
   Py_XSETREF(error_factory, Py_NewRef(factory));
@@ -277,7 +380,8 @@ static PyObject *end_tran(PyObject *self, PyObject *args) {
     return NULL;
   }
 
-  CALL(SQL_HANDLE_DBC, dbc, SQLEndTran(SQL_HANDLE_DBC, dbc, commit ? SQL_COMMIT : SQL_ROLLBACK));
+  CALL_WARN(SQL_HANDLE_DBC, dbc,
+            SQLEndTran(SQL_HANDLE_DBC, dbc, commit ? SQL_COMMIT : SQL_ROLLBACK));
   Py_RETURN_NONE;
 }
 
@@ -348,7 +452,7 @@ static PyObject *exec_direct(PyObject *self, PyObject *args) {
     return NULL;
   }
 
-  CALL(SQL_HANDLE_STMT, stmt, SQLExecDirect(stmt, (SQLCHAR *)query, (SQLINTEGER)length));
+  CALL_WARN(SQL_HANDLE_STMT, stmt, SQLExecDirect(stmt, (SQLCHAR *)query, (SQLINTEGER)length));
   Py_RETURN_NONE;
 }
 
@@ -459,7 +563,7 @@ static PyObject *execute(PyObject *self, PyObject *args) {
   Py_BEGIN_ALLOW_THREADS
   rc = SQLExecute(stmt);
   Py_END_ALLOW_THREADS
-  if (check(rc, SQL_HANDLE_STMT, stmt) == 0) {
+  if (check(rc, SQL_HANDLE_STMT, stmt) == 0 && warn(rc, SQL_HANDLE_STMT, stmt) == 0) {
     result = Py_NewRef(Py_None);
   }
 
@@ -681,7 +785,7 @@ static PyObject *fetch_row(PyObject *self, PyObject *args) {
   if (rc == SQL_NO_DATA) {
     Py_RETURN_NONE;
   }
-  if (check(rc, SQL_HANDLE_STMT, stmt) < 0) {
+  if (check(rc, SQL_HANDLE_STMT, stmt) < 0 || warn(rc, SQL_HANDLE_STMT, stmt) < 0) {
     return NULL;
   }
 
@@ -744,6 +848,7 @@ static PyObject *fetch_row(PyObject *self, PyObject *args) {
 
 static PyMethodDef methods[] = {
     {"set_error_factory", set_error_factory, METH_O, NULL},
+    {"set_warning_handler", set_warning_handler, METH_O, NULL},
     {"alloc_handle", alloc_handle, METH_VARARGS, NULL},
     {"free_handle", free_handle, METH_VARARGS, NULL},
     {"connect", connect, METH_VARARGS, NULL},

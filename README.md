@@ -165,6 +165,25 @@ except vsql.IntegrityError as e:
 | `XX` internal error                            | `InternalError`     |
 | anything else                                  | `DatabaseError`     |
 
+`e.diagnostics` is a tuple of `(sqlstate, message)` for every condition that
+vsql raised, starting with the error itself.
+
+### Warnings
+
+A statement that completes with a warning (an SQLSTATE of class `01`) issues a
+`vsql.Warning` with `warnings.warn`, so it's printed once by default, and can be
+filtered or turned into an error like any other warning:
+
+```python
+cur.execute("SELECT COUNT(x) FROM foo")
+# Warning: null value eliminated in set function (SQLSTATE 01003)
+
+warnings.simplefilter("error", vsql.Warning)  # raise them instead
+```
+
+`vsql.Warning` is a subclass of Python's `Warning` (which PEP 249 requires to
+be an `Exception`), with the `sqlstate` and `message`.
+
 ## Versions
 
 `vsql.vsql_version` is the version of vsql that's compiled into the package

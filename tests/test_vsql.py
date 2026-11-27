@@ -1,6 +1,7 @@
 import datetime
 import decimal
 import threading
+import warnings
 
 import pytest
 
@@ -360,6 +361,31 @@ def test_error_fields(conn):
     e = vsql.ProgrammingError("x")
     assert (e.sqlstate, e.table_name, e.cursor_name) == (None, None, None)
 
+
+
+def test_warnings(conn):
+    conn.execute("CREATE TABLE foo (x INTEGER)")
+    conn.execute("INSERT INTO foo (x) VALUES (1), (NULL)")
+    with pytest.warns(vsql.Warning) as record:
+        assert scalar(conn, "SELECT COUNT(x) FROM foo") == 1
+    assert [(w.message.sqlstate, w.message.message) for w in record] == [
+        ("01003", "null value eliminated in set function")]
+    assert record[0].filename == __file__
+    assert issubclass(vsql.Warning, Exception)
+
+    # A warning can be an error.
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", vsql.Warning)
+        with pytest.raises(vsql.Warning) as e:
+            conn.execute("VALUES CAST('abc' AS VARCHAR(2))")
+        assert e.value.sqlstate == "01004"
+
+
+def test_diagnostics(conn):
+    with pytest.raises(vsql.ProgrammingError) as e:
+        conn.execute("SELECT * FROM nope")
+    assert e.value.diagnostics == (("42P01", e.value.message),)
+    assert vsql.InterfaceError("x").diagnostics == ()
 
 def test_error_classes():
     assert isinstance(vsql.error("42P01", "x"), vsql.ProgrammingError)
