@@ -570,10 +570,11 @@ static PyObject *get_string(SQLINTEGER stmt, SQLSMALLINT n) {
       Py_RETURN_NONE;
     }
 
-    // The rest of the string (ind) didn't fit, so the buffer has a null
-    // terminated piece of it.
+    // The rest of the string (ind) didn't fit, so the buffer is full with a
+    // null terminated piece of it. The piece is the whole buffer, since the
+    // string can have a NUL in it.
     if (rc == SQL_SUCCESS_WITH_INFO && ind >= size - (SQLINTEGER)length) {
-      size_t piece = strlen(buf + length);
+      size_t piece = (size_t)size - length - 1;
       size_t new_size = length + piece + (size_t)ind + 1;
       char *grown = PyMem_Malloc(new_size);
       if (grown == NULL) {

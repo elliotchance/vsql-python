@@ -299,6 +299,11 @@ def test_long_strings(conn):
         assert scalar(conn, "SELECT s FROM foo") == want
 
 
+    # A NUL is part of the string, even in a piece that isn't the last.
+    for want in ["a\x00b", "a\x00b" + "c" * 300, "c" * 300 + "\x00" + "é" * 300]:
+        assert scalar(conn, "SELECT CAST(? AS VARCHAR(1000))", [want]) == want
+
+
 @pytest.mark.parametrize(
     "query, error, sqlstate",
     [
