@@ -5,7 +5,11 @@
 // is in Python.
 //
 // libvsql can be called from any thread, so the GIL is released while a
-// routine runs.
+// routine runs, and the module doesn't need the GIL on a free-threaded build
+// (Py_mod_gil). libvsql runs the routines of an environment one at a time,
+// so a Connection (which has its own environment) used from two threads can't
+// corrupt libvsql, even though that isn't supported (threadsafety is 1).
+// error_factory is only set once, when the vsql package is imported.
 //
 // When a routine fails, the exception is made by the function given to
 // set_error_factory, from the SQLSTATE, message and other fields (such as the
@@ -895,8 +899,18 @@ static PyMethodDef methods[] = {
     {NULL, NULL, 0, NULL},
 };
 
+static int exec_module(PyObject *m);
+
+static PyModuleDef_Slot slots[] = {
+    {Py_mod_exec, exec_module},
+#if PY_VERSION_HEX >= 0x030D0000
+    {Py_mod_gil, Py_MOD_GIL_NOT_USED},
+#endif
+    {0, NULL},
+};
+
 static struct PyModuleDef module = {
-    PyModuleDef_HEAD_INIT, "vsql._libvsql", NULL, -1, methods,
+    PyModuleDef_HEAD_INIT, "vsql._libvsql", NULL, 0, methods, slots,
 };
 
 // The constants that the Python code needs.
@@ -966,18 +980,14 @@ static const struct {
     {NULL, 0},
 };
 
-PyMODINIT_FUNC PyInit__libvsql(void) {
-  PyObject *m = PyModule_Create(&module);
-  if (m == NULL) {
-    return NULL;
-  }
-
+static int exec_module(PyObject *m) {
   for (int i = 0; constants[i].name != NULL; i++) {
     if (PyModule_AddIntConstant(m, constants[i].name, constants[i].value) < 0) {
-      Py_DECREF(m);
-      return NULL;
+      return -1;
     }
   }
 
-  return m;
+  return 0;
 }
+
+PyMODINIT_FUNC PyInit__libvsql(void) { return PyModuleDef_Init(&module); }

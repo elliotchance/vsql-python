@@ -25,6 +25,8 @@ jobs:
           - { os: macOS, arch: ARM64, runner: macos-latest }
           - { os: Windows, arch: x86-64, runner: windows-latest }
           - { os: Windows, arch: ARM64, runner: windows-11-arm }
+          # Free-threaded Python.
+          - { os: Linux, arch: x86-64, runner: ubuntu-24.04, python: "3.14t" }
         exclude:
           # Python for Windows on ARM64 starts at 3.11.
           - { os: Windows, arch: ARM64, python: "3.9" }
