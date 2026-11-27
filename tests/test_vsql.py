@@ -759,12 +759,23 @@ def test_concurrency(path):
     threads, inserts = 8, 50
     errors = []
 
+    def retry(f):
+        # Each statement is its own SERIALIZABLE transaction (vsql's default
+        # with autocommit on), which waits for the others for up to 5 seconds,
+        # and that isn't always enough on a slow runner.
+        while True:
+            try:
+                return f()
+            except vsql.OperationalError as e:
+                if e.sqlstate != "40001":
+                    raise
+
     def work(g):
         try:
             with vsql.connect(path, autocommit=True) as conn:
                 for i in range(inserts):
-                    conn.execute("INSERT INTO foo (g, x) VALUES (?, ?)", [g, i])
-                    n = scalar(conn, "SELECT COUNT(*) FROM foo WHERE g = ?", [g])
+                    retry(lambda: conn.execute("INSERT INTO foo (g, x) VALUES (?, ?)", [g, i]))
+                    n = retry(lambda: scalar(conn, "SELECT COUNT(*) FROM foo WHERE g = ?", [g]))
                     assert n == i + 1, f"thread {g}: got {n} rows, want {i + 1}"
         except BaseException as e:
             errors.append(e)
