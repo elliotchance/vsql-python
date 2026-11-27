@@ -658,6 +658,22 @@ static PyObject *col_attribute(PyObject *self, PyObject *args) {
   return PyLong_FromLong(value);
 }
 
+// set_scrollable(stmt, on) makes the cursor of the statement scrollable (or
+// not), before it's executed.
+static PyObject *set_scrollable(PyObject *self, PyObject *args) {
+  SQLINTEGER stmt;
+  int on;
+  if (!PyArg_ParseTuple(args, "ip", &stmt, &on)) {
+    return NULL;
+  }
+
+  static SQLINTEGER scrollable = SQL_SCROLLABLE, nonscrollable = SQL_NONSCROLLABLE;
+  CALL(SQL_HANDLE_STMT, stmt,
+       SQLSetStmtAttr(stmt, SQL_ATTR_CURSOR_SCROLLABLE,
+                      on ? (SQLPOINTER)&scrollable : (SQLPOINTER)&nonscrollable, 0));
+  Py_RETURN_NONE;
+}
+
 // close_cursor(stmt)
 static PyObject *close_cursor(PyObject *self, PyObject *args) {
   SQLINTEGER stmt;
@@ -766,21 +782,28 @@ static PyObject *get_binary(SQLINTEGER stmt, SQLSMALLINT n) {
   }
 }
 
-// fetch_row(stmt, kinds) -> tuple or None fetches the next row, it's None
-// after the last row. kinds has a character for how each column is read: 'i'
+// fetch_row(stmt, kinds[, orientation, offset]) -> tuple or None fetches the
+// next row (or the row of a FetchOrientation and FetchOffset for
+// SQLFetchScroll), it's None when there isn't a row there. kinds has a character for how each column is read: 'i'
 // (SQL_BIGINT), 'd' (SQL_DOUBLE), 'r' (SQL_REAL), 'b' (SQL_BINARY, as bytes)
 // or 's' (SQL_CHAR). A NULL is None.
 static PyObject *fetch_row(PyObject *self, PyObject *args) {
   SQLINTEGER stmt;
   const char *kinds;
   Py_ssize_t n;
-  if (!PyArg_ParseTuple(args, "iy#", &stmt, &kinds, &n)) {
+  int orientation = SQL_FETCH_NEXT;
+  SQLINTEGER offset = 0;
+  if (!PyArg_ParseTuple(args, "iy#|ii", &stmt, &kinds, &n, &orientation, &offset)) {
     return NULL;
   }
 
   SQLRETURN rc;
   Py_BEGIN_ALLOW_THREADS
-  rc = SQLFetch(stmt);
+  if (orientation == SQL_FETCH_NEXT) {
+    rc = SQLFetch(stmt);
+  } else {
+    rc = SQLFetchScroll(stmt, (SQLSMALLINT)orientation, offset);
+  }
   Py_END_ALLOW_THREADS
   if (rc == SQL_NO_DATA) {
     Py_RETURN_NONE;
@@ -867,6 +890,7 @@ static PyMethodDef methods[] = {
     {"describe_col", describe_col, METH_VARARGS, NULL},
     {"col_attribute", col_attribute, METH_VARARGS, NULL},
     {"close_cursor", close_cursor, METH_VARARGS, NULL},
+    {"set_scrollable", set_scrollable, METH_VARARGS, NULL},
     {"fetch_row", fetch_row, METH_VARARGS, NULL},
     {NULL, NULL, 0, NULL},
 };
@@ -931,6 +955,7 @@ static const struct {
     {"SQL_VSQL_FILE_READ_VERSION", SQL_VSQL_FILE_READ_VERSION},
     {"SQL_VSQL_FILE_WRITE_VERSION", SQL_VSQL_FILE_WRITE_VERSION},
     {"SQL_NO_NULLS", SQL_NO_NULLS},
+    {"SQL_FETCH_ABSOLUTE", SQL_FETCH_ABSOLUTE},
     {"SQL_NULLABLE", SQL_NULLABLE},
     {"SQL_TRANSACTION_READ_ONLY", SQL_TRANSACTION_READ_ONLY},
     {"SQL_TRANSACTION_READ_WRITE", SQL_TRANSACTION_READ_WRITE},

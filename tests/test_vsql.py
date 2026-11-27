@@ -456,6 +456,53 @@ def test_fetch(conn):
         cur.execute("DELETE FROM foo WHERE x > 100").fetchone()
 
 
+
+def test_scroll(conn):
+    conn.execute("CREATE TABLE foo (x INTEGER)")
+    conn.cursor().executemany("INSERT INTO foo (x) VALUES (?)", [[i] for i in range(5)])
+
+    cur = conn.cursor(scrollable=True)
+    assert cur.scrollable and cur.rownumber is None
+    cur.execute("SELECT x FROM foo ORDER BY x")
+    assert cur.rownumber == 0
+    assert cur.fetchmany(2) == [(0,), (1,)]
+    assert cur.rownumber == 2
+    cur.scroll(-2)
+    assert cur.fetchone() == (0,)
+    cur.scroll(3, "absolute")
+    assert cur.fetchall() == [(3,), (4,)]
+    assert cur.rownumber == 5
+    assert cur.fetchone() is None
+    # It stays open after the last row, so it can scroll back.
+    cur.scroll(1, "absolute")
+    assert cur.fetchone() == (1,)
+    # It can move to just after the last row, but not past it.
+    cur.scroll(5, "absolute")
+    assert cur.fetchone() is None
+    for value, mode in [(6, "absolute"), (-1, "absolute"), (-6, "relative"), (1, "relative")]:
+        with pytest.raises(IndexError):
+            cur.scroll(value, mode)
+    assert cur.rownumber == 5
+    with pytest.raises(vsql.ProgrammingError):
+        cur.scroll(0, "sideways")
+
+    # A cursor that isn't scrollable can only move forward.
+    cur = conn.execute("SELECT x FROM foo ORDER BY x")
+    assert not cur.scrollable
+    cur.scroll(2)
+    assert cur.rownumber == 2
+    assert cur.fetchone() == (2,)
+    with pytest.raises(vsql.NotSupportedError):
+        cur.scroll(-1)
+    with pytest.raises(IndexError):
+        cur.scroll(3)
+
+    # rownumber is None after a statement that isn't a query.
+    cur.execute("DELETE FROM foo WHERE x = 0")
+    assert cur.rownumber is None
+    with pytest.raises(vsql.ProgrammingError):
+        cur.scroll(0)
+
 def test_prepared_statements(conn):
     conn.execute("CREATE TABLE foo (x INTEGER)")
     cur = conn.cursor()

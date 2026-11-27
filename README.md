@@ -114,6 +114,26 @@ A string can't be a binary string (or the other way around), and a
 year-month interval can't be a day-time interval (`07006`). A
 `datetime.timedelta` can have up to 99,999,999 days (`DAY(8)`).
 
+## Scrolling
+
+`cursor.rownumber` is the index of the next row of a query (from 0). The rows
+of a cursor from `conn.cursor(scrollable=True)` can be fetched in any order
+with `cursor.scroll(value, mode)`, where `mode` is `"relative"` (the default)
+or `"absolute"`:
+
+```python
+cur = conn.cursor(scrollable=True)
+cur.execute("SELECT x FROM foo ORDER BY x")
+cur.fetchmany(2)
+cur.scroll(-2)  # back to the first row
+cur.scroll(5, "absolute")  # the sixth row
+```
+
+Scrolling outside of the rows is an `IndexError`. A cursor that isn't
+scrollable can only scroll forward. A scrollable cursor stays open after its
+last row has been fetched (so, with autocommit on, the query isn't committed
+until the cursor is closed, or executes another statement).
+
 ## Columns
 
 | SQL                              | Python              |

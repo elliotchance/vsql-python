@@ -3,7 +3,7 @@ import weakref
 
 from . import _convert
 from . import _libvsql as lib
-from ._errors import DatabaseError, InterfaceError, ProgrammingError
+from ._errors import DatabaseError, InterfaceError, NotSupportedError, ProgrammingError
 
 _isolation_levels = {
     "READ UNCOMMITTED": lib.SQL_TRANSACTION_READ_UNCOMMITTED,
@@ -160,9 +160,13 @@ class Connection:
             self._check_transaction(lib.SQL_HANDLE_DBC, self._dbc)
             raise
 
-    def cursor(self):
+    def cursor(self, scrollable=False):
+        """A new cursor. The rows of a query on a scrollable cursor can be
+        fetched in any order (see Cursor.scroll), otherwise they can only be
+        fetched once, in order."""
+
         self._check()
-        cursor = Cursor(self)
+        cursor = Cursor(self, scrollable)
         self._cursors.add(cursor)
 
         return cursor
@@ -226,15 +230,20 @@ class Cursor:
     Each cursor has its own statement handle. The statement of the last
     execute with parameters stays prepared, so executing it again (such as with
     executemany) doesn't prepare it again.
+
+    rownumber is the index of the next row of the query (starting at 0), or
+    None if the last statement wasn't a query.
     """
 
     arraysize = 1
     lastrowid = None
 
-    def __init__(self, connection):
+    def __init__(self, connection, scrollable=False):
         self.connection = connection
+        self.scrollable = bool(scrollable)
         self.description = None
         self.rowcount = -1
+        self.rownumber = None
         self._stmt = None
         self._prepared = None
         self._open = False
@@ -262,11 +271,14 @@ class Cursor:
         self._close_results()
         self.description = None
         self.rowcount = -1
+        self.rownumber = None
         params = _convert.to_params(parameters)
 
         self.connection._begin()
         if self._stmt is None:
             self._stmt = lib.alloc_handle(lib.SQL_HANDLE_STMT, self.connection._dbc)
+            if self.scrollable:
+                lib.set_scrollable(self._stmt, True)
 
         try:
             if params or operation == self._prepared:
@@ -288,6 +300,7 @@ class Cursor:
             return self
 
         self._open = True
+        self.rownumber = 0
         description = []
         kinds = []
         converters = []
@@ -332,13 +345,21 @@ class Cursor:
             return None
 
         try:
-            row = lib.fetch_row(self._stmt, self._kinds)
+            if self.scrollable:
+                # The rows stay open after the last one, since it can scroll
+                # back.
+                row = lib.fetch_row(self._stmt, self._kinds, lib.SQL_FETCH_ABSOLUTE,
+                                    self.rownumber + 1)
+            else:
+                row = lib.fetch_row(self._stmt, self._kinds)
         except DatabaseError:
             self.connection._check_transaction(lib.SQL_HANDLE_STMT, self._stmt)
             raise
         if row is None:
-            self._close_results()
+            if not self.scrollable:
+                self._close_results()
             return None
+        self.rownumber += 1
         if self._converters is None:
             return row
 
@@ -377,6 +398,45 @@ class Cursor:
             raise StopIteration
 
         return row
+
+    def scroll(self, value, mode="relative"):
+        """Moves to another row of the query, so it's the next one fetched.
+        With mode "relative" (the default), value is the number of rows to
+        move (which can be negative), and with "absolute" it's the index of
+        the row (starting at 0). It's an IndexError if the row isn't in the
+        query, but it can move to just after the last row.
+
+        A cursor that isn't scrollable (see Connection.cursor) can only move
+        forward (NotSupportedError otherwise), by fetching the rows in between.
+        """
+
+        self._check()
+        if self.rownumber is None:
+            raise ProgrammingError("the last statement wasn't a query")
+        if mode == "relative":
+            target = self.rownumber + value
+        elif mode == "absolute":
+            target = value
+        else:
+            raise ProgrammingError(f"unknown scroll mode: {mode!r}")
+        if target < 0:
+            raise IndexError(f"row {target} is before the first row")
+
+        if self.scrollable:
+            # The row before the target must exist (target - 1, which is the
+            # row numbered target from 1).
+            if target > 0 and lib.fetch_row(self._stmt, b"", lib.SQL_FETCH_ABSOLUTE,
+                                            target) is None:
+                raise IndexError(f"row {target} is after the last row")
+            self.rownumber = target
+            return
+
+        if target < self.rownumber:
+            raise NotSupportedError("a cursor can only scroll back if it's scrollable, "
+                                    "see Connection.cursor")
+        while self.rownumber < target:
+            if self.fetchone() is None:
+                raise IndexError(f"row {target} is after the last row")
 
     def setinputsizes(self, sizes):
         pass
