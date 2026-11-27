@@ -104,12 +104,13 @@ def _datetime(parameter_type, s):
     return (lib.SQL_CHAR, parameter_type, len(s), digits, s.encode())
 
 
-# The datetimes from SQLGetData, such as "2022-01-02T15:04:05.123456+0530".
+# The datetimes from SQLGetData are literals (the result of a CAST to
+# CHARACTER VARYING), such as "TIMESTAMP '2022-01-02 15:04:05.123456+05:30'".
 # There are at most 6 fractional digits.
-_time = r"(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,6}))?(?:([+-])(\d{2})(\d{2}))?"
-_date_re = re.compile(r"(\d{4})-(\d{2})-(\d{2})")
-_time_re = re.compile(_time)
-_timestamp_re = re.compile(r"(\d{4})-(\d{2})-(\d{2})T" + _time)
+_time = r"(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,6}))?(?:([+-])(\d{2}):(\d{2}))?"
+_date_re = re.compile(r"DATE '(\d{4})-(\d{2})-(\d{2})'")
+_time_re = re.compile(r"TIME '" + _time + "'")
+_timestamp_re = re.compile(r"TIMESTAMP '(\d{4})-(\d{2})-(\d{2}) " + _time + "'")
 
 
 def _match(regex, s, type_name):

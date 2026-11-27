@@ -15,13 +15,14 @@ jobs:
         arch: [x86-64, ARM64]
         python: ["3.9", "3.14"]
         include:
-          - { os: Linux, arch: x86-64, runner: ubuntu-latest }
+          # ubuntu-latest (26.04) has no Python 3.9.
+          - { os: Linux, arch: x86-64, runner: ubuntu-24.04 }
           - { os: Linux, arch: ARM64, runner: ubuntu-24.04-arm }
           - { os: macOS, arch: x86-64, runner: macos-15-intel }
           - { os: macOS, arch: ARM64, runner: macos-latest }
           - { os: Windows, arch: x86-64, runner: windows-latest }
         exclude:
-          # There's no libvsql C for Windows ARM64.
+          # Windows ARM64 isn't tested yet.
           - { os: Windows, arch: ARM64 }
     runs-on: ${{ matrix.runner }}
     steps:

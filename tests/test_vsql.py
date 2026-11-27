@@ -67,7 +67,6 @@ def test_column_values(conn, expr, want, type_name):
         assert got.utcoffset() == want.utcoffset()
 
 
-@pytest.mark.xfail(reason="vsql drops the leading zeros of fractional seconds", strict=True)
 def test_fractional_seconds_with_leading_zeros(conn):
     assert scalar(conn, "VALUES TIMESTAMP '2022-01-02 15:04:05.000006'") == datetime.datetime(
         2022, 1, 2, 15, 4, 5, 6)
@@ -386,16 +385,19 @@ def test_commit_closes_cursors(path):
 
 
 def test_isolation_levels(path):
-    for level in ["READ UNCOMMITTED", "READ COMMITTED"]:
+    for level in ["READ COMMITTED", "REPEATABLE READ", "SERIALIZABLE"]:
         with vsql.connect(path, isolation_level=level) as conn:
             assert scalar(conn, "VALUES 1") == 1
+            conn.execute("CREATE TABLE t (x INT)")
+            conn.rollback()
 
-    for options in [{"isolation_level": "SERIALIZABLE"}, {"isolation_level": "REPEATABLE READ"},
-                    {"read_only": True}]:
+    # READ UNCOMMITTED is always read only.
+    for options in [{"isolation_level": "READ UNCOMMITTED"}, {"read_only": True}]:
         with vsql.connect(path, **options) as conn:
-            with pytest.raises(vsql.NotSupportedError) as e:
-                conn.execute("VALUES 1")
-            assert e.value.sqlstate == "HYC00"
+            assert scalar(conn, "VALUES 1") == 1
+            with pytest.raises(vsql.OperationalError) as e:
+                conn.execute("CREATE TABLE t (x INT)")
+            assert e.value.sqlstate == "25006"
 
     with pytest.raises(vsql.ProgrammingError):
         vsql.connect(path, isolation_level="SNAPSHOT")

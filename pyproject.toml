@@ -45,5 +45,6 @@ archs = ["native"]
 archs = ["native"]
 
 [tool.cibuildwheel.windows]
-# There's no libvsql C for Windows ARM64 (or 32 bit).
+# Only x86-64 is built and tested (libvsql has C for ARM64 too, but not 32
+# bit).
 archs = ["AMD64"]

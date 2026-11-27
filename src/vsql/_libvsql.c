@@ -303,7 +303,9 @@ static PyObject *execute(PyObject *self, PyObject *args) {
       }
       pointer = s;
       buffer_length = (SQLINTEGER)length + 1;
-      inds[i] = (SQLINTEGER)length;
+      // A length must be greater than zero, so an empty string (which is null
+      // terminated, like all bytes) is SQL_NTS.
+      inds[i] = length ? (SQLINTEGER)length : SQL_NTS;
     }
 
     Py_BEGIN_ALLOW_THREADS
