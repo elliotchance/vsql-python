@@ -648,14 +648,15 @@ def test_commit_closes_cursors(path):
 
 
 def test_isolation_levels(path):
-    for level in ["READ COMMITTED", "REPEATABLE READ", "SERIALIZABLE"]:
+    for level in ["READ COMMITTED", "REPEATABLE READ", "SERIALIZABLE", "serializable"]:
         with vsql.connect(path, isolation_level=level) as conn:
             assert scalar(conn, "VALUES 1") == 1
             conn.execute("CREATE TABLE t (x INT)")
             conn.rollback()
 
     # READ UNCOMMITTED is always read only.
-    for options in [{"isolation_level": "READ UNCOMMITTED"}, {"read_only": True}]:
+    for options in [{"isolation_level": "READ UNCOMMITTED"},
+                    {"isolation_level": "read uncommitted"}, {"read_only": True}]:
         with vsql.connect(path, **options) as conn:
             assert scalar(conn, "VALUES 1") == 1
             with pytest.raises(vsql.OperationalError) as e:
@@ -664,6 +665,8 @@ def test_isolation_levels(path):
 
     with pytest.raises(vsql.ProgrammingError):
         vsql.connect(path, isolation_level="SNAPSHOT")
+    with pytest.raises(vsql.ProgrammingError):
+        vsql.connect(path, isolation_level=None)
 
 
 def test_persistence(path):

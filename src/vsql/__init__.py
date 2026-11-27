@@ -19,7 +19,8 @@ Like PEP 249 requires, autocommit is off: the first statement starts a
 transaction, which is ended by commit or rollback (or closing the connection,
 which rolls it back). With autocommit on, each statement is committed when it
 finishes, or when the rows of a query have all been fetched. START TRANSACTION,
-COMMIT and ROLLBACK can't be executed as statements.
+COMMIT and ROLLBACK can't be executed as statements. Each execute is one
+statement, and vsql doesn't allow "--" comments.
 
 A savepoint is made by executing SAVEPOINT, and released by executing RELEASE
 SAVEPOINT. ROLLBACK TO SAVEPOINT can't be executed as a statement either, so
@@ -121,10 +122,12 @@ def connect(database, autocommit=False, isolation_level="READ COMMITTED", read_o
     exist) or ":memory:".
 
     isolation_level ("READ UNCOMMITTED", "READ COMMITTED", "REPEATABLE READ"
-    or "SERIALIZABLE") and read_only are for the transactions that are started
-    when autocommit is off. vsql runs READ UNCOMMITTED as READ COMMITTED, and
-    REPEATABLE READ as SERIALIZABLE. A READ UNCOMMITTED transaction is always
-    read only.
+    or "SERIALIZABLE", in any case) and read_only are for the transactions
+    that are started when autocommit is off. vsql runs READ UNCOMMITTED as
+    READ COMMITTED, and REPEATABLE READ as SERIALIZABLE. A READ UNCOMMITTED
+    transaction is always read only. The default is READ COMMITTED, rather
+    than vsql's SERIALIZABLE, since a SERIALIZABLE transaction waits for the
+    other transactions on the file to finish.
     """
 
     return Connection(database, autocommit, isolation_level, read_only)

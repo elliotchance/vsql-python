@@ -23,13 +23,14 @@ class Connection:
 
     def __init__(self, database, autocommit=False, isolation_level="READ COMMITTED",
                  read_only=False):
+        level = isolation_level.upper() if isinstance(isolation_level, str) else None
         try:
-            self._isolation_level = _isolation_levels[isolation_level]
+            self._isolation_level = _isolation_levels[level]
         except KeyError:
             raise ProgrammingError(f"unknown isolation level: {isolation_level!r}") from None
         # A READ UNCOMMITTED transaction must be READ ONLY.
         self._access_mode = (lib.SQL_TRANSACTION_READ_ONLY
-                             if read_only or isolation_level == "READ UNCOMMITTED"
+                             if read_only or level == "READ UNCOMMITTED"
                              else lib.SQL_TRANSACTION_READ_WRITE)
         self._autocommit = bool(autocommit)
         self._in_transaction = False

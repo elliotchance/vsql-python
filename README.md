@@ -42,7 +42,35 @@ the connection rolls it back). With `vsql.connect(..., autocommit=True)` (or
 when all the rows of a query have been fetched. `START TRANSACTION`, `COMMIT`
 and `ROLLBACK` can't be executed as statements.
 
-vsql's transactions are `READ COMMITTED`.
+With autocommit on, a query's transaction lasts until all of its rows have
+been fetched (or its cursor is closed, or executes another statement), so a
+cursor that's left part way through a query can block other connections that
+write to the database file.
+
+### Isolation levels
+
+```python
+conn = vsql.connect("test.vsql", isolation_level="SERIALIZABLE", read_only=False)
+```
+
+`isolation_level` is `"READ COMMITTED"` (the default), `"SERIALIZABLE"`,
+`"REPEATABLE READ"` (which vsql runs as `SERIALIZABLE`) or
+`"READ UNCOMMITTED"` (which vsql runs as `READ COMMITTED`, and is always read
+only), in any case. `read_only=True` starts `READ ONLY` transactions, where a
+change is `25006`. They're for the transactions that the driver starts when
+autocommit is off.
+
+vsql's own default is `SERIALIZABLE`, but a `SERIALIZABLE` transaction waits
+for the other transactions on the same file to finish (for up to 5 seconds,
+then it's `40001`). With autocommit off, a connection is in a transaction from
+its first statement until it commits or rolls back, so the driver's default is
+`READ COMMITTED` instead, which only fails (`40001`) when two transactions
+change the same row.
+
+### Statements
+
+Each `execute` is one statement (a `;` between statements is `42601`), and vsql
+doesn't allow `--` comments (`42000`), but `/* ... */` comments work.
 
 ### Savepoints
 
