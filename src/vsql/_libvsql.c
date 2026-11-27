@@ -607,6 +607,12 @@ static PyObject *get_string(SQLINTEGER stmt, SQLSMALLINT n) {
 
     PyObject *s = PyUnicode_DecodeUTF8(buf, (Py_ssize_t)(length + ind), NULL);
     PyMem_Free(large);
+    // vsql's strings are always UTF-8, but it should still be a DataError
+    // rather than a UnicodeDecodeError if one isn't.
+    if (s == NULL && PyErr_ExceptionMatches(PyExc_UnicodeDecodeError)) {
+      PyErr_Clear();
+      raise_error("22021", "character not in repertoire: the value isn't UTF-8", -1);
+    }
     return s;
   }
 }

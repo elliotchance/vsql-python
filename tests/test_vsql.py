@@ -245,6 +245,7 @@ def test_parameters_in_where(conn):
         ([vsql.YearMonthInterval(1)], vsql.ProgrammingError, "07006"),
         ([object()], vsql.ProgrammingError, "unsupported type"),
         ([decimal.Decimal("NaN")], vsql.DataError, "finite"),
+        (["\ud800"], vsql.DataError, "parameter 1: .* isn't valid Unicode"),
         ([], vsql.ProgrammingError, "dynamic parameter"),
     ],
 )
