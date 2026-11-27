@@ -108,8 +108,13 @@ def to_param(value):
         return (lib.SQL_DOUBLE, lib.SQL_DOUBLE, 0, 0, value)
 
     if isinstance(value, str):
-        # A CHARACTER VARYING as long as the string (which can't be 0).
-        return (lib.SQL_CHAR, lib.SQL_VARCHAR, max(len(value), 1), 0, value.encode())
+        # A CHARACTER VARYING as long as the string (which can't be 0). A lone
+        # surrogate (such as from surrogateescape) can't be UTF-8.
+        try:
+            encoded = value.encode()
+        except UnicodeEncodeError as e:
+            raise DataError(f"{value!r} isn't valid Unicode: {e.reason}") from None
+        return (lib.SQL_CHAR, lib.SQL_VARCHAR, max(len(value), 1), 0, encoded)
 
     if isinstance(value, decimal.Decimal):
         if not value.is_finite():
