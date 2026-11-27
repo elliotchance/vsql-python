@@ -237,6 +237,11 @@ be used from different threads at the same time (`threadsafety` is 1: threads
 can share the module, but not connections). The GIL is released while libvsql
 runs.
 
+On musl (such as Alpine), a thread only has 128 KiB of stack, which isn't
+enough for libvsql, so importing vsql sets `threading.stack_size` to 1 MiB
+(unless it was set already). A thread that was started before vsql was
+imported, or that wasn't started by Python, still has the smaller stack.
+
 ## Type hints
 
 The package has type hints (`vsql/__init__.pyi`), so type checkers such as
@@ -245,8 +250,8 @@ parameters and the rows.
 
 ## Requirements
 
-Python 3.9 or later. Wheels are built for macOS (ARM64 and x86-64), Linux
-(ARM64 and x86-64) and Windows (x86-64), so pip doesn't need to compile
+Python 3.9 or later. Wheels are built for macOS, Linux (glibc and musl, such as
+Alpine) and Windows, each for ARM64 and x86-64, so pip doesn't need to compile
 anything.
 
 Building from the source distribution needs a C compiler, and takes a minute or

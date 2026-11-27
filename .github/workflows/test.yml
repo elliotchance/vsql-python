@@ -24,9 +24,10 @@ jobs:
           - { os: macOS, arch: x86-64, runner: macos-15-intel }
           - { os: macOS, arch: ARM64, runner: macos-latest }
           - { os: Windows, arch: x86-64, runner: windows-latest }
+          - { os: Windows, arch: ARM64, runner: windows-11-arm }
         exclude:
-          # Windows ARM64 isn't tested yet.
-          - { os: Windows, arch: ARM64 }
+          # Python for Windows on ARM64 starts at 3.11.
+          - { os: Windows, arch: ARM64, python: "3.9" }
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v7

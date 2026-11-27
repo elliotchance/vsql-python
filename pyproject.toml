@@ -37,7 +37,7 @@ fallback_version = "0.0.0"
 [tool.cibuildwheel]
 # CPython only, and not free-threaded (the module would turn the GIL back on).
 build = "cp3*"
-skip = ["cp3??t-*", "*-musllinux_*"]
+skip = ["cp3??t-*"]
 test-requires = ["pytest"]
 test-command = "pytest {project}/tests"
 
@@ -48,6 +48,6 @@ archs = ["native"]
 archs = ["native"]
 
 [tool.cibuildwheel.windows]
-# Only x86-64 is built and tested (libvsql has C for ARM64 too, but not 32
+# The runner's own architecture, x86-64 or ARM64 (libvsql doesn't support 32
 # bit).
-archs = ["AMD64"]
+archs = ["native"]

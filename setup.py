@@ -65,6 +65,16 @@ else:
     # -w doesn't turn off) unless -Wno-int-conversion is given.
     extra_compile_args = ["-std=gnu11", "-fwrapv", "-w", "-Wno-int-conversion"]
 
+if sys.platform == "linux":
+    # The garbage collector finds the data of the program and its libraries
+    # with dl_iterate_phdr, but it only knows that the C library has it for
+    # glibc. On musl (Alpine and musllinux) it falls back to the program's own
+    # data segment, from the start of libvsql's to the end of Python's, and
+    # aborts with "Wrong DATASTART/END pair" (or crashes later). musl has had
+    # dl_iterate_phdr since 1.0, and it must be a strong reference since musl
+    # leaves a weak one NULL.
+    extra_compile_args += ["-DHAVE_DL_ITERATE_PHDR", "-DDL_ITERATE_PHDR_STRONG"]
+
 setup(
     cmdclass={"build_ext": BuildExt},
     ext_modules=[

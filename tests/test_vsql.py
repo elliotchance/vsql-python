@@ -753,3 +753,24 @@ def test_file_version(path):
         assert 0 < read <= write
     with pytest.raises(vsql.InterfaceError):
         conn.file_version
+
+
+@pytest.mark.parametrize("host_type, size, want", [
+    ("x86_64-pc-linux-musl", 0, 1024 * 1024),
+    ("aarch64-unknown-linux-musl", 512 * 1024, 512 * 1024),
+    ("x86_64-pc-linux-gnu", 0, 0),
+    (None, 0, 0),
+])
+def test_thread_stack_size(monkeypatch, host_type, size, want):
+    """Threads get a bigger stack on musl, unless a size was set."""
+
+    sizes = [size]
+
+    def stack_size(*size):
+        if size:
+            sizes.append(size[0])
+        return sizes[-1]
+
+    monkeypatch.setattr(threading, "stack_size", stack_size)
+    vsql._set_thread_stack_size(host_type)
+    assert sizes[-1] == want
