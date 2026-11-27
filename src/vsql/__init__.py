@@ -73,6 +73,9 @@ ProgrammingError for 42P01, an undefined table), with the SQLSTATE as its
 sqlstate attribute. The object it's about (such as constraint_name or
 table_name) is in the other attributes, see Error.
 
+A statement that completes with a warning (such as 01003, null value
+eliminated in set function) issues a Warning with warnings.warn.
+
 Version
 
 vsql_version is the version of vsql (such as "1.7.58"), vsql_version_info is
@@ -99,6 +102,7 @@ from ._errors import (
     ProgrammingError,
     Warning,
     error,
+    warn as _warn,
 )
 
 apilevel = "2.0"
@@ -109,6 +113,7 @@ threadsafety = 1
 paramstyle = "qmark"
 
 _libvsql.set_error_factory(error)
+_libvsql.set_warning_handler(_warn)
 
 
 def connect(database, autocommit=False, isolation_level="READ COMMITTED", read_only=False):

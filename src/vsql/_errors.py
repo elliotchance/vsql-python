@@ -3,9 +3,46 @@
 # sqlstate attribute, and the other fields of its diagnostic record (such as
 # the constraint that was violated) as the other attributes.
 
+import builtins
+import os
+import sys
+import warnings
 
-class Warning(Exception):  # noqa: A001 (PEP 249 requires this name)
-    """An important warning, such as data truncation."""
+_package = os.path.dirname(__file__)
+
+
+class Warning(builtins.Warning):  # noqa: A001 (PEP 249 requires this name)
+    """A warning from vsql (an SQLSTATE of class 01), such as 01003 (null value
+    eliminated in set function). It's issued with warnings.warn (so it's
+    printed once by default, and can be filtered or made an error), rather
+    than raised, since the statement still completed.
+
+    sqlstate is the SQLSTATE, and message is the message.
+    """
+
+    def __init__(self, message, sqlstate=None):
+        super().__init__(message)
+        self.message = message
+        self.sqlstate = sqlstate
+
+    def __str__(self):
+        if self.sqlstate is None:
+            return self.message
+
+        return f"{self.message} (SQLSTATE {self.sqlstate})"
+
+
+def warn(sqlstate, message):
+    """Issues a Warning for a diagnostic record of a statement that completed
+    with a warning. It's for the code that called the cursor (or connection)
+    method."""
+
+    # The first frame that isn't in this package (skip_file_prefixes is new in
+    # Python 3.12).
+    frame, level = sys._getframe(1), 2
+    while frame is not None and frame.f_code.co_filename.startswith(_package):
+        frame, level = frame.f_back, level + 1
+    warnings.warn(Warning(message, sqlstate), stacklevel=level)
 
 
 class Error(Exception):
@@ -26,14 +63,19 @@ class Error(Exception):
             the column (such as one that doesn't exist)
         cursor_name
             the cursor (for an invalid cursor state)
+
+    diagnostics is a tuple of (sqlstate, message) for each condition that vsql
+    raised, starting with this one (or () if the error isn't from vsql).
     """
 
     constraint_catalog = constraint_schema = constraint_name = None
     catalog_name = schema_name = table_name = column_name = cursor_name = None
+    diagnostics = ()
 
     def __init__(self, message, sqlstate=None, *, constraint_catalog=None,
                  constraint_schema=None, constraint_name=None, catalog_name=None,
-                 schema_name=None, table_name=None, column_name=None, cursor_name=None):
+                 schema_name=None, table_name=None, column_name=None, cursor_name=None,
+                 diagnostics=()):
         super().__init__(message)
         self.message = message
         self.sqlstate = sqlstate
@@ -45,6 +87,7 @@ class Error(Exception):
         self.table_name = table_name
         self.column_name = column_name
         self.cursor_name = cursor_name
+        self.diagnostics = tuple(diagnostics)
 
     def __str__(self):
         if self.sqlstate is None:
