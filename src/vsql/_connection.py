@@ -387,6 +387,12 @@ def _column(name, type_name, size, digits, nullable, leading=None):
         precision, scale = size, digits
     elif type_name == "DECFLOAT":
         precision = size
+    elif type_name.startswith(("TIME", "DATE")):
+        # The size is the length of the datetime in positions, and the scale
+        # is the fractional seconds precision (a DATE has none).
+        display_size = size
+        if type_name != "DATE":
+            scale = digits
     elif leading is not None:
         # An interval's precision is the leading field precision, and its scale
         # is the fractional seconds precision (if it ends with SECOND). The
