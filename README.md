@@ -121,9 +121,11 @@ The `type_code` in `cursor.description` is the name of the type (such as
 `vsql.NUMBER`, `vsql.STRING`, `vsql.BINARY` or `vsql.DATETIME` (which includes
 the intervals). The `internal_size` is the length of a string (in octets, 4 for
 each character) or a binary string, the precision of a number, or the length of
-a datetime or interval. The `precision` and `scale` are those of a `DECIMAL`
-or `NUMERIC`, the precision of a `DECFLOAT` (16 or 34), or the leading field
-precision and the fractional seconds precision of an interval.
+a datetime or interval (which is also its `display_size`). The `precision` and
+`scale` are those of a `DECIMAL` or `NUMERIC`, the precision of a `DECFLOAT`
+(16 or 34), or the leading field precision and the fractional seconds
+precision of an interval. The `scale` of a `TIME` or `TIMESTAMP` is its
+fractional seconds precision.
 
 ## Errors
 

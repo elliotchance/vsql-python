@@ -147,6 +147,16 @@ def test_description(conn):
     assert y[1:6] == ("INTERVAL YEAR TO MONTH", 7, 7, 3, None)
     assert s[1:6] == ("INTERVAL DAY TO SECOND", 18, 18, 4, 3)
 
+    # The scale of a TIME or TIMESTAMP is the fractional seconds precision.
+    conn.execute("""CREATE TABLE baz (d DATE, t TIME, tz TIME(6) WITH TIME ZONE,
+        ts TIMESTAMP(3), tsz TIMESTAMP WITH TIME ZONE)""")
+    d, t, tz, ts, tsz = conn.execute("SELECT * FROM baz").description
+    assert d[1:6] == ("DATE", 10, 10, None, None)
+    assert t[1:6] == ("TIME", 8, 8, None, 0)
+    assert tz[1:6] == ("TIME WITH TIME ZONE", 21, 21, None, 6)
+    assert ts[1:6] == ("TIMESTAMP", 23, 23, None, 3)
+    assert tsz[1:6] == ("TIMESTAMP WITH TIME ZONE", 32, 32, None, 6)
+
     # A statement that isn't a query has no description.
     conn.execute("DELETE FROM foo")
     cur = conn.execute("DELETE FROM foo")
