@@ -1,9 +1,12 @@
 name: Test
 
+# Pull requests are tested before they're squash merged, so main isn't built
+# again, and a change that's only to documentation isn't tested.
 on:
-  push:
-    branches: [main]
   pull_request:
+    paths-ignore:
+      - "**.md"
+      - LICENSE
 
 jobs:
   test:

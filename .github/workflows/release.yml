@@ -1,16 +1,25 @@
 name: Release
 
-# Wheels are built for each push to main (and pull request), and published to
-# PyPI (with trusted publishing) when a GitHub release is published. The
-# version is the release's tag (v1.2.3 is 1.2.3), from setuptools-scm, so the
-# full git history is checked out.
+# Wheels are built (and tested with every Python) for a pull request that
+# changes how the package is built, and published to PyPI (with trusted
+# publishing) when a GitHub release is published. Every other pull request is
+# only tested by test.yml, which compiles libvsql once for each runner and
+# Python, rather than for every Python. The version is the release's tag
+# (v1.2.3 is 1.2.3), from setuptools-scm, so the full git history is checked
+# out.
 
 on:
-  push:
-    branches: [main]
   pull_request:
+    paths:
+      - pyproject.toml
+      - setup.py
+      - MANIFEST.in
+      - libvsql_flags.json
+      - "internal/**"
+      - .github/workflows/release.yml
   release:
     types: [published]
+  workflow_dispatch:
 
 jobs:
   wheels:
