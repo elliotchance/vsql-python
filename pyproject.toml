@@ -27,6 +27,9 @@ vsql = "https://github.com/elliotchance/vsql"
 package-dir = { "" = "src" }
 packages = ["vsql"]
 
+[tool.setuptools.package-data]
+vsql = ["py.typed", "*.pyi"]
+
 [tool.setuptools_scm]
 # For a build without the git history (such as a copy of the repository).
 fallback_version = "0.0.0"

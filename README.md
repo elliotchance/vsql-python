@@ -237,6 +237,12 @@ be used from different threads at the same time (`threadsafety` is 1: threads
 can share the module, but not connections). The GIL is released while libvsql
 runs.
 
+## Type hints
+
+The package has type hints (`vsql/__init__.pyi`), so type checkers such as
+mypy and pyright know the types of the module, `Connection`, `Cursor`, the
+parameters and the rows.
+
 ## Requirements
 
 Python 3.9 or later. Wheels are built for macOS (ARM64 and x86-64), Linux

@@ -33,3 +33,10 @@ jobs:
       - run: pip install . pytest
       - run: pytest -v tests
       - run: python example/main.py
+      # The type hints (__init__.pyi) match the module, and the example passes
+      # mypy --strict with them.
+      - if: matrix.os == 'Linux' && matrix.arch == 'x86-64' && matrix.python == '3.14'
+        run: |
+          pip install mypy
+          python -m mypy.stubtest vsql --ignore-missing-stub
+          mypy --strict example/main.py
