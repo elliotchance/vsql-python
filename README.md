@@ -257,7 +257,8 @@ format (`(0, 0)` for `:memory:`).
 Each connection has its own libvsql environment, so different connections can
 be used from different threads at the same time (`threadsafety` is 1: threads
 can share the module, but not connections). The GIL is released while libvsql
-runs.
+runs, and on free-threaded Python (such as 3.14t) the module doesn't turn the
+GIL back on.
 
 On musl (such as Alpine), a thread only has 128 KiB of stack, which isn't
 enough for libvsql, so importing vsql sets `threading.stack_size` to 1 MiB

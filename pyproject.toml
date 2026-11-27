@@ -35,9 +35,9 @@ vsql = ["py.typed", "*.pyi"]
 fallback_version = "0.0.0"
 
 [tool.cibuildwheel]
-# CPython only, and not free-threaded (the module would turn the GIL back on).
+# CPython only, including the free-threaded builds (which cibuildwheel builds
+# by default from 3.14t).
 build = "cp3*"
-skip = ["cp3??t-*"]
 test-requires = ["pytest"]
 test-command = "pytest {project}/tests"
 

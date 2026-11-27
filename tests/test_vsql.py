@@ -1,5 +1,7 @@
 import datetime
 import decimal
+import sys
+import sysconfig
 import threading
 import warnings
 
@@ -789,6 +791,14 @@ def test_concurrency(path):
 
     with vsql.connect(path) as conn:
         assert scalar(conn, "SELECT COUNT(*) FROM foo") == threads * inserts
+
+
+@pytest.mark.skipif(not sysconfig.get_config_var("Py_GIL_DISABLED"),
+                    reason="Python isn't free-threaded")
+def test_free_threaded():
+    """Importing the module doesn't turn the GIL back on."""
+
+    assert not sys._is_gil_enabled()
 
 
 def test_module_globals():
